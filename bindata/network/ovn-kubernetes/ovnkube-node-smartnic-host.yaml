@@ -1,150 +1,37 @@
 ---
+# ovnkube-node in smart-nic-host mode
+# daemonset version 3
+# starts node daemons for ovn, each in a separate container
+# it is run on all nodes with nvidia.com/smart-nic label
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
-  name: ovnkube-node
+  name: ovnkube-node-smart-nic-host
   namespace: openshift-ovn-kubernetes
   annotations:
     kubernetes.io/description: |
-      This daemonset launches the ovn-kubernetes per node networking components.
+      This DaemonSet launches the ovn-kubernetes networking components for worker nodes.
     release.openshift.io/version: "{{.ReleaseVersion}}"
 spec:
   selector:
     matchLabels:
-      app: ovnkube-node
+      app: ovnkube-node-smart-nic-host
   updateStrategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
-        app: ovnkube-node
+        app: ovnkube-node-smart-nic-host
         component: network
-        type: infra
         openshift.io/component: network
+        type: infra
         kubernetes.io/os: "linux"
     spec:
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: network.operator.openshift.io/external-openvswitch
-                operator: DoesNotExist
       serviceAccountName: ovn-kubernetes-node
       hostNetwork: true
       hostPID: true
       priorityClassName: "system-node-critical"
-      # volumes in all containers:
-      # (container) -> (host)
-      # /etc/openvswitch -> /var/lib/openvswitch/etc - ovsdb system id
-      # /var/lib/openvswitch -> /var/lib/openvswitch/data - ovsdb data
-      # /run/openvswitch -> tmpfs - ovsdb sockets
-      # /env -> configmap env-overrides - debug overrides
       containers:
-      # ovn-controller: programs the vswitch with flows from the sbdb
-      - name: ovn-controller
-        image: "{{.OvnImage}}"
-        command:
-        - /bin/bash
-        - -c
-        - |
-          set -e
-          if [[ -f "/env/${K8S_NODE}" ]]; then
-            set -o allexport
-            source "/env/${K8S_NODE}"
-            set +o allexport
-          fi
-          echo "$(date -Iseconds) - starting ovn-controller"
-          exec ovn-controller unix:/var/run/openvswitch/db.sock -vfile:off \
-            --no-chdir --pidfile=/var/run/ovn/ovn-controller.pid \
-            -p /ovn-cert/tls.key -c /ovn-cert/tls.crt -C /ovn-ca/ca-bundle.crt \
-            -vconsole:"${OVN_LOG_LEVEL}"
-        securityContext:
-          privileged: true
-        env:
-        - name: OVN_LOG_LEVEL
-          value: info
-        - name: K8S_NODE
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        volumeMounts:
-        - mountPath: /run/openvswitch
-          name: run-openvswitch
-        - mountPath: /run/ovn/
-          name: run-ovn
-        - mountPath: /etc/openvswitch
-          name: etc-openvswitch
-        - mountPath: /etc/ovn/
-          name: etc-openvswitch
-        - mountPath: /var/lib/openvswitch
-          name: var-lib-openvswitch
-        - mountPath: /env
-          name: env-overrides
-        - mountPath: /ovn-cert
-          name: ovn-cert
-        - mountPath: /ovn-ca
-          name: ovn-ca
-        terminationMessagePolicy: FallbackToLogsOnError
-        resources:
-          requests:
-            cpu: 10m
-            memory: 300Mi
-
-      - name: kube-rbac-proxy
-        image: {{.KubeRBACProxyImage}}
-        command:
-        - /bin/bash
-        - -c
-        - |
-          #!/bin/bash
-          set -euo pipefail
-          TLS_PK=/etc/pki/tls/metrics-cert/tls.key
-          TLS_CERT=/etc/pki/tls/metrics-cert/tls.crt
-          # As the secret mount is optional we must wait for the files to be present.
-          # The service is created in monitor.yaml and this is created in sdn.yaml.
-          # If it isn't created there is probably an issue so we want to crashloop.
-          retries=0
-          TS=$(date +%s)
-          WARN_TS=$(( ${TS} + $(( 20 * 60)) ))
-          HAS_LOGGED_INFO=0
-          
-          log_missing_certs(){
-              CUR_TS=$(date +%s)
-              if [[ "${CUR_TS}" -gt "WARN_TS"  ]]; then
-                echo $(date -Iseconds) WARN: ovn-node-metrics-cert not mounted after 20 minutes.
-              elif [[ "${HAS_LOGGED_INFO}" -eq 0 ]] ; then
-                echo $(date -Iseconds) INFO: ovn-node-metrics-cert not mounted. Waiting one hour.
-                HAS_LOGGED_INFO=1
-              fi
-          }
-          while [[ ! -f "${TLS_PK}" ||  ! -f "${TLS_CERT}" ]] ; do
-            log_missing_certs
-            sleep 5
-          done
-          
-          echo $(date -Iseconds) INFO: ovn-node-metrics-certs mounted, starting kube-rbac-proxy
-          exec /usr/bin/kube-rbac-proxy \
-            --logtostderr \
-            --secure-listen-address=:9103 \
-            --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256 \
-            --upstream=http://127.0.0.1:29103/ \
-            --tls-private-key-file=${TLS_PK} \
-            --tls-cert-file=${TLS_CERT}
-        ports:
-        - containerPort: 9103
-          name: https
-        resources:
-          requests:
-            cpu: 10m
-            memory: 20Mi
-        terminationMessagePolicy: FallbackToLogsOnError
-        volumeMounts:
-        - name: ovn-node-metrics-cert
-          mountPath: /etc/pki/tls/metrics-cert
-          readOnly: True
-
-      # ovnkube-node: does node-level bookkeeping and configuration
       - name: ovnkube-node
         image: "{{.OvnImage}}"
         command:
@@ -163,23 +50,6 @@ spec:
           echo "I$(date "+%m%d %H:%M:%S.%N") - disable conntrack on geneve port"
           iptables -t raw -A PREROUTING -p udp --dport {{.GenevePort}} -j NOTRACK
           iptables -t raw -A OUTPUT -p udp --dport {{.GenevePort}} -j NOTRACK
-          retries=0
-          while true; do
-            # TODO: change to use '--request-timeout=30s', if https://github.com/kubernetes/kubernetes/issues/49343 is fixed. 
-            db_ip=$(timeout 30 kubectl get ep -n ${ovn_config_namespace} ovnkube-db -o jsonpath='{.subsets[0].addresses[0].ip}')
-            if [[ -n "${db_ip}" ]]; then
-              break
-            fi
-            (( retries += 1 ))
-            if [[ "${retries}" -gt 40 ]]; then
-              echo "E$(date "+%m%d %H:%M:%S.%N") - db endpoint never came up"
-              exit 1
-            fi
-            echo "I$(date "+%m%d %H:%M:%S.%N") - waiting for db endpoint"
-            sleep 5
-          done
-
-          echo "I$(date "+%m%d %H:%M:%S.%N") - starting ovnkube-node db_ip ${db_ip}"
 
           gateway_mode_flags=
           # Check to see if ovs is provided by the node. This is only for upgrade from 4.5->4.6 or
@@ -190,9 +60,9 @@ spec:
             gateway_mode_flags="--gateway-mode local --gateway-interface none"
           fi
 
-          if grep -q smart-nic-host /etc/ovn-kube-mode; then
+          if grep -q smart-nic-host /etc/systemd/system/ovn-kube-mode; then
             ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic-host"
-          elif grep -q smart-nic /etc/ovn-kube-mode; then
+          elif grep -q smart-nic /etc/systemd/system/ovn-kube-mode; then
             ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic"
           else
             ovnkube_node_mode_flag="--ovnkube-node-mode full"
@@ -245,18 +115,16 @@ spec:
           name: host-slash
           readOnly: true
           mountPropagation: HostToContainer
-        # for the CNI server socket
-        - mountPath: /run/ovn-kubernetes/
+        # We mount our socket here
+        - mountPath: /run/ovn-kubernetes
           name: host-run-ovn-kubernetes
-        # accessing bind-mounted net namespaces
         - mountPath: /run/netns
           name: host-run-netns
           readOnly: true
           mountPropagation: HostToContainer
-        # for installing the CNI plugin binary
+        # CNI related mounts which we take over
         - mountPath: /cni-bin-dir
           name: host-cni-bin
-        # for installing the CNI configuration file
         - mountPath: /etc/cni/net.d
           name: host-cni-netd
         # Where we store IP allocations
@@ -282,7 +150,7 @@ spec:
           name: ovn-ca
         resources:
           requests:
-            cpu: 10m
+            cpu: 100m
             memory: 300Mi
         lifecycle:
           preStop:
@@ -295,12 +163,12 @@ spec:
           periodSeconds: 5
       nodeSelector:
         beta.kubernetes.io/os: "linux"
+        network.operator.openshift.io/external-openvswitch: ""
       volumes:
       # for checking ovs-configuration service
       - name: systemd-units
         hostPath:
           path: /etc/systemd/system
-      # used for iptables wrapper scripts
       - name: host-slash
         hostPath:
           path: /
@@ -319,7 +187,6 @@ spec:
       - name: run-ovn
         hostPath:
           path: /var/run/ovn
-      # For CNI server
       - name: host-run-ovn-kubernetes
         hostPath:
           path: /run/ovn-kubernetes

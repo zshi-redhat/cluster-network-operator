@@ -202,6 +202,15 @@ spec:
           if [[ -n "${IPFIX_COLLECTORS}" ]] ; then
             export_network_flows_flags="$export_network_flows_flags --ipfix-targets ${IPFIX_COLLECTORS}"
           fi
+
+          if grep -q smart-nic-host /etc/ovn-kube-mode; then
+            ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic-host"
+          elif grep -q smart-nic /etc/ovn-kube-mode; then
+            ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic"
+          else
+            ovnkube_node_mode_flag="--ovnkube-node-mode full"
+          fi
+
           exec /usr/bin/ovnkube --init-node "${K8S_NODE}" \
             --nb-address "{{.OVN_NB_DB_LIST}}" \
             --sb-address "{{.OVN_SB_DB_LIST}}" \
@@ -218,6 +227,7 @@ spec:
             --inactivity-probe="${OVN_CONTROLLER_INACTIVITY_PROBE}" \
             ${gateway_mode_flags} \
             --disable-snat-multiple-gws \
+            ${ovnkube_node_mode_flag} \
             --metrics-bind-address "127.0.0.1:29103" \
             ${export_network_flows_flags}
         env:

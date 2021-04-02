@@ -60,16 +60,19 @@ spec:
             gateway_mode_flags="--gateway-mode local --gateway-interface none"
           fi
 
-          if grep -q smart-nic-host /etc/systemd/system/ovn-kube-mode; then
-            ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic-host"
-            ovnkube_node_mgmt_port="--ovnkube-node-mgmt-port-netdev ${OVNKUBE_NODE_MGMT_PORT_NETDEV}"
-          elif grep -q smart-nic /etc/systemd/system/ovn-kube-mode; then
-            ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic"
-            ovnkube_node_mgmt_port=""
-          else
-            ovnkube_node_mode_flag="--ovnkube-node-mode full"
-            ovnkube_node_mgmt_port=""
-          fi
+          #if grep -q smart-nic-host /etc/systemd/system/ovn-kube-mode; then
+          #  ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic-host"
+          #  ovnkube_node_mgmt_port="--ovnkube-node-mgmt-port-netdev ${OVNKUBE_NODE_MGMT_PORT_NETDEV}"
+          #elif grep -q smart-nic /etc/systemd/system/ovn-kube-mode; then
+          #  ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic"
+          #  ovnkube_node_mgmt_port=""
+          #else
+          #  ovnkube_node_mode_flag="--ovnkube-node-mode full"
+          #  ovnkube_node_mgmt_port=""
+          #fi
+          #
+          ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic-host"
+          ovnkube_node_mgmt_port="--ovnkube-node-mgmt-port-netdev ${OVNKUBE_NODE_MGMT_PORT_NETDEV}"
 
           exec /usr/bin/ovnkube --init-node "${K8S_NODE}" \
             --nb-address "{{.OVN_NB_DB_LIST}}" \

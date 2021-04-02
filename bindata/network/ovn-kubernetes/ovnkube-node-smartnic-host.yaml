@@ -62,10 +62,13 @@ spec:
 
           if grep -q smart-nic-host /etc/systemd/system/ovn-kube-mode; then
             ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic-host"
+            ovnkube_node_mgmt_port="--ovnkube-node-mgmt-port-netdev ${OVNKUBE_NODE_MGMT_PORT_NETDEV}"
           elif grep -q smart-nic /etc/systemd/system/ovn-kube-mode; then
             ovnkube_node_mode_flag="--ovnkube-node-mode smart-nic"
+            ovnkube_node_mgmt_port=""
           else
             ovnkube_node_mode_flag="--ovnkube-node-mode full"
+            ovnkube_node_mgmt_port=""
           fi
 
           exec /usr/bin/ovnkube --init-node "${K8S_NODE}" \
@@ -84,6 +87,7 @@ spec:
             --inactivity-probe="${OVN_CONTROLLER_INACTIVITY_PROBE}" \
             ${gateway_mode_flags} \
             ${ovnkube_node_mode_flag} \
+            ${ovnkube_node_mgmt_port} \
             --metrics-bind-address "127.0.0.1:29103"
         env:
         # for kubectl

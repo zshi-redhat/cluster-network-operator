@@ -4,7 +4,7 @@ kind: ConfigMap
 apiVersion: v1
 metadata:
   name: ovnkube-config
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
 data:
   ovnkube.conf:   |-
     [default]
@@ -19,7 +19,7 @@ data:
 
     [kubernetes]
     service-cidrs="{{.OVN_service_cidr}}"
-    ovn-config-namespace="openshift-ovn-kubernetes"
+    ovn-config-namespace="ovn"
     apiserver="{{.K8S_APISERVER}}"
     host-network-namespace="openshift-host-network"
 {{- if .OVNHybridOverlayEnable }}

@@ -7,7 +7,7 @@ metadata:
   {{ else }}
   name: ovnkube-node
   {{ end }}
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
   annotations:
     kubernetes.io/description: |
       This daemonset launches the ovn-kubernetes per node networking components.
@@ -291,7 +291,7 @@ spec:
           fi
           echo "I$(date "+%m%d %H:%M:%S.%N") - waiting for db_ip addresses"
           cp -f /usr/libexec/cni/ovn-k8s-cni-overlay /cni-bin-dir/
-          ovn_config_namespace=openshift-ovn-kubernetes
+          ovn_config_namespace=ovn
           echo "I$(date "+%m%d %H:%M:%S.%N") - disable conntrack on geneve port"
           iptables -t raw -A PREROUTING -p udp --dport {{.GenevePort}} -j NOTRACK
           iptables -t raw -A OUTPUT -p udp --dport {{.GenevePort}} -j NOTRACK
@@ -522,8 +522,8 @@ spec:
           ip route show
           iptables -nvL
           iptables -nvL -t nat
-          oc observe pods -n openshift-ovn-kubernetes -l app=ovnkube-node -a '{ .status.hostIP }' -- /var/run/ovn/add_iptables.sh
-          #systemd-run -qPG -- oc observe pods -n openshift-ovn-kubernetes -l app=ovnkube-node -a '{ .status.hostIP }' -- /var/run/ovn/add_iptables.sh
+          oc observe pods -n ovn -l app=ovnkube-node -a '{ .status.hostIP }' -- /var/run/ovn/add_iptables.sh
+          #systemd-run -qPG -- oc observe pods -n ovn -l app=ovnkube-node -a '{ .status.hostIP }' -- /var/run/ovn/add_iptables.sh
         lifecycle:
           preStop:
             exec:

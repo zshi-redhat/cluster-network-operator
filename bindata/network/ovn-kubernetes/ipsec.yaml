@@ -3,7 +3,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: ovn-ipsec
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
   annotations:
     kubernetes.io/description: |
       This DaemonSet launches the ovn ipsec networking components for all nodes.

@@ -30,8 +30,8 @@ spec:
     - kind: ServiceAccount
       serviceAccount:
         name: ovn-kubernetes-controller
-        namespace: openshift-ovn-kubernetes
+        namespace: ovn
     - kind: ServiceAccount
       serviceAccount:
         name: ovn-kubernetes-node 
-        namespace: openshift-ovn-kubernetes
+        namespace: ovn

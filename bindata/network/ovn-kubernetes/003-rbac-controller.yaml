@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: ovn-kubernetes-controller
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -126,14 +126,14 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: ovn-kubernetes-controller
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: openshift-ovn-kubernetes-sbdb
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
 rules:
 - apiGroups: [""]
   resources:
@@ -148,7 +148,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: openshift-ovn-kubernetes-sbdb
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -156,4 +156,4 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: ovn-kubernetes-controller
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn

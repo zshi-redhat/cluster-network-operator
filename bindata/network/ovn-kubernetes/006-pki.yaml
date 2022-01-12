@@ -4,7 +4,7 @@ apiVersion: network.operator.openshift.io/v1
 kind: OperatorPKI
 metadata:
   name: ovn
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
 spec:
   targetCert:
     commonName: {{.OVN_CERT_CN}}

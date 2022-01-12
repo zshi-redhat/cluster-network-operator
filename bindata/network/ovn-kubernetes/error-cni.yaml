@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: error-cni-script
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
   annotations:
     kubernetes.io/description: |
       This is a script that serves as the CNI on DPU. Only host network supported, so returns error to cmdAdd() calls.
@@ -58,7 +58,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: error-cni-conf
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
   annotations:
     kubernetes.io/description: |
       This is the Error-CNI Readiness Indicator File to let Multus know CNI is ready.
@@ -72,7 +72,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: error-cni-plugin
-  namespace: openshift-ovn-kubernetes
+  namespace: ovn
   annotations:
     kubernetes.io/description: |
       This daemon installs the Error-CNI on DPU worker nodes in the Infra-Cluster.

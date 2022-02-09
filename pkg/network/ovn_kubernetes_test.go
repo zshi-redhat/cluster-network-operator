@@ -21,10 +21,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	uns "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	operv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-network-operator/pkg/apply"
 	"github.com/openshift/cluster-network-operator/pkg/bootstrap"
 	"github.com/openshift/cluster-network-operator/pkg/names"
 	"github.com/openshift/cluster-network-operator/pkg/util/k8s"
@@ -102,21 +101,6 @@ func TestRenderOVNKubernetes(t *testing.T) {
 
 		_, ok := sel["node-role.kubernetes.io/master"]
 		g.Expect(ok).To(BeTrue())
-	}
-
-	// Make sure every obj is reasonable:
-	// - it is supported
-	// - it reconciles to itself (steady state)
-	for _, obj := range objs {
-		g.Expect(apply.IsObjectSupported(obj)).NotTo(HaveOccurred())
-		cur := obj.DeepCopy()
-		upd := obj.DeepCopy()
-
-		err = apply.MergeObjectForUpdate(cur, upd)
-		g.Expect(err).NotTo(HaveOccurred())
-
-		tweakMetaForCompare(cur)
-		g.Expect(cur).To(Equal(upd))
 	}
 }
 
@@ -1812,7 +1796,7 @@ type fakeClientReader struct {
 	configMap *v1.ConfigMap
 }
 
-func (f *fakeClientReader) Get(_ context.Context, _ client.ObjectKey, obj client.Object) error {
+func (f *fakeClientReader) Get(_ context.Context, _ crclient.ObjectKey, obj crclient.Object) error {
 	if cmPtr, ok := obj.(*v1.ConfigMap); !ok {
 		return fmt.Errorf("expecting *v1.ConfigMap, got %T", obj)
 	} else if f.configMap == nil {
@@ -1825,7 +1809,7 @@ func (f *fakeClientReader) Get(_ context.Context, _ client.ObjectKey, obj client
 	return nil
 }
 
-func (f *fakeClientReader) List(_ context.Context, _ client.ObjectList, _ ...client.ListOption) error {
+func (f *fakeClientReader) List(_ context.Context, _ crclient.ObjectList, _ ...crclient.ListOption) error {
 	return errors.New("unexpected invocation to List")
 }
 

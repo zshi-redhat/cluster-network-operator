@@ -3,6 +3,7 @@ package operconfig
 import (
 	"context"
 	"fmt"
+	"k8s.io/client-go/util/retry"
 	"log"
 	"reflect"
 	"strings"
@@ -307,8 +308,9 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 	allResources = append(allResources, deployments...)
 	r.podReconciler.SetResources(allResources)
 
+	var objsToCopy []*uns.Unstructured
 	// Apply the objects to the cluster
-	for _, obj := range objs {
+	for i, obj := range objs {
 		// TODO: OwnerRef for non default clusters. For HyperShift this should probably be HostedControlPlane CR
 		if obj.GetClusterName() == "" {
 			// Mark the object to be GC'd if the owner is deleted.
@@ -318,6 +320,14 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 				r.status.SetDegraded(statusmanager.OperatorConfig, "InternalError",
 					fmt.Sprintf("Internal error while updating operator configuration: %v", err))
 				return reconcile.Result{}, err
+			}
+		}
+		anno := obj.GetAnnotations()
+		if anno != nil {
+			// objects to copy should not be directly applied here
+			if _, exists := anno[names.CopyFromAnnotation]; exists {
+				objsToCopy = append(objsToCopy, objs[i])
+				continue
 			}
 		}
 
@@ -333,7 +343,6 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 			log.Println(err)
 
 			// Ignore errors if we've asked to do so.
-			anno := obj.GetAnnotations()
 			if anno != nil {
 				if _, ok := anno[names.IgnoreObjectErrorAnnotation]; ok {
 					log.Println("Object has ignore-errors annotation set, continuing")
@@ -342,6 +351,16 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 			}
 			r.status.SetDegraded(statusmanager.OperatorConfig, "ApplyOperatorConfig",
 				fmt.Sprintf("Error while updating operator configuration: %v", err))
+			return reconcile.Result{}, err
+		}
+	}
+	for _, obj := range objsToCopy {
+		// TODO: Is copying objects across clusters safe? Can a rouge user copy something from the management cluster
+		if err := copyObject(ctx, obj, r.client); err != nil {
+			err := errors.Errorf("(%s) %s/%s'%s' failed to copy object, err: %v", obj.GroupVersionKind(), obj.GetNamespace(), obj.GetName(), names.CopyFromAnnotation, err)
+			log.Println(err)
+			r.status.SetDegraded(statusmanager.OperatorConfig, "ApplyOperatorConfig",
+				fmt.Sprintf("Error while copying operator configuration: %v", err))
 			return reconcile.Result{}, err
 		}
 	}
@@ -390,4 +409,37 @@ func reconcileOvsFlowsConfig(object crclient.Object) []reconcile.Request {
 		Name:      names.OPERATOR_CONFIG,
 		Namespace: names.APPLIED_NAMESPACE,
 	}}}
+}
+
+func copyObject(ctx context.Context, obj *uns.Unstructured, client *cnoclient.Client) error {
+	anno := obj.GetAnnotations()
+	if anno == nil {
+		return fmt.Errorf("no annotations defined")
+	}
+
+	parts := strings.Split(anno[names.CopyFromAnnotation], "/")
+	if len(parts) != 3 {
+		return fmt.Errorf("'%s' annotation is invalid, expected: ClusterName/Namespace/ResourceName, got: %s", names.CopyFromAnnotation, anno[names.CopyFromAnnotation])
+	}
+
+	clusterName, namespace, name := parts[0], parts[1], parts[2]
+
+	cli := client.ClientFor(clusterName)
+	if cli == nil {
+		return fmt.Errorf("failed to find the client for %s", clusterName)
+	}
+
+	objFrom := &uns.Unstructured{}
+	objFrom.SetGroupVersionKind(obj.GroupVersionKind())
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		err := cli.CRClient().Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, objFrom)
+		if err != nil {
+			return fmt.Errorf("failed to find the object, err: %v", err)
+		}
+
+		// TODO: is there a better way to copy the original object?
+		objFrom.Object["metadata"] = obj.Object["metadata"]
+		return apply.ApplyObject(ctx, client.ClientFor(objFrom.GetClusterName()), objFrom, "operconfig")
+	})
+	return err
 }

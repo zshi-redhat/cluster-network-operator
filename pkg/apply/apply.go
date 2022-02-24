@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	cnoclient "github.com/openshift/cluster-network-operator/pkg/client"
 	"github.com/openshift/cluster-network-operator/pkg/names"
@@ -27,14 +28,15 @@ type Object interface {
 // This causes fields we own to be updated, and fields we don't own to be preserved.
 // For more information, see https://kubernetes.io/docs/reference/using-api/server-side-apply/
 // The subcontroller, if set, is used to assign field ownership.
-func ApplyObject(ctx context.Context, client *cnoclient.ClusterClient, obj Object, subcontroller string) error {
+func ApplyObject(ctx context.Context, client *cnoclient.Client, obj Object, subcontroller string) error {
 	name := obj.GetName()
 	namespace := obj.GetNamespace()
-	if client == nil {
+	clusterClient := client.ClientFor(obj.GetClusterName())
+	if clusterClient == nil {
 		return fmt.Errorf("client not defined for %v", obj)
 	}
 
-	oks, _, _ := client.Scheme().ObjectKinds(obj)
+	oks, _, _ := clusterClient.Scheme().ObjectKinds(obj)
 	if len(oks) == 0 {
 		return errors.Errorf("Object %s/%s has no Kind registered in the Scheme", namespace, name)
 	}
@@ -54,15 +56,26 @@ func ApplyObject(ctx context.Context, client *cnoclient.ClusterClient, obj Objec
 	// It isn't allowed to send ManagedFields in a Patch.
 	obj.SetManagedFields(nil)
 
+	anno := obj.GetAnnotations()
+	if anno != nil {
+		if _, exists := anno[names.CopyFromAnnotation]; exists {
+			var err error
+			obj, err = getObjectCopy(ctx, obj, client)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	// determine resource
-	rm, err := client.RESTMapper().RESTMapping(gvk.GroupKind(), gvk.Version)
+	rm, err := clusterClient.RESTMapper().RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve resource from Object %s: %v", objDesc, err)
 	}
 
 	// If create-only is specified, check to see if exists
 	if _, ok := obj.GetAnnotations()[names.CreateOnlyAnnotation]; ok {
-		_, err := client.Dynamic().Resource(rm.Resource).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		_, err := clusterClient.Dynamic().Resource(rm.Resource).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err == nil {
 			log.Printf("Object %s has create-only annotation and already exists, skipping apply.", objDesc)
 			return nil
@@ -89,9 +102,53 @@ func ApplyObject(ctx context.Context, client *cnoclient.ClusterClient, obj Objec
 		log.Printf("could not encode %s for apply", objDesc)
 		return fmt.Errorf("could not encode for patching: %w", err)
 	}
-	if _, err := client.Dynamic().Resource(rm.Resource).Namespace(namespace).Patch(ctx, name, types.ApplyPatchType, data, patchOptions); err != nil {
+	if _, err := clusterClient.Dynamic().Resource(rm.Resource).Namespace(namespace).Patch(ctx, name, types.ApplyPatchType, data, patchOptions); err != nil {
 		return fmt.Errorf("failed to apply / update %s: %w", objDesc, err)
 	}
 	log.Printf("Apply / Create of %s was successful", objDesc)
 	return nil
+}
+
+func getObjectCopy(ctx context.Context, obj Object, client *cnoclient.Client) (Object, error) {
+	anno := obj.GetAnnotations()
+	if anno == nil {
+		return nil, fmt.Errorf("no annotations defined")
+	}
+
+	parts := strings.Split(anno[names.CopyFromAnnotation], "/")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("'%s' annotation is invalid, expected: ClusterName/Namespace/ResourceName, got: %s", names.CopyFromAnnotation, anno[names.CopyFromAnnotation])
+	}
+
+	clusterName, namespace, name := parts[0], parts[1], parts[2]
+
+	cli := client.ClientFor(clusterName)
+	if cli == nil {
+		return nil, fmt.Errorf("failed to find the client for %s", clusterName)
+	}
+
+	ret := &unstructured.Unstructured{}
+	ret.SetGroupVersionKind(obj.GetObjectKind().GroupVersionKind())
+
+	err := cli.CRClient().Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, ret)
+	if err != nil {
+		return nil, err
+	}
+
+	ret.SetNamespace(obj.GetNamespace())
+	ret.SetName(obj.GetName())
+	ret.SetClusterName(obj.GetClusterName())
+	ret.SetAnnotations(obj.GetAnnotations())
+	ret.SetLabels(obj.GetLabels())
+	ret.SetOwnerReferences(obj.GetOwnerReferences())
+
+	ret.SetCreationTimestamp(obj.GetCreationTimestamp())
+	ret.SetSelfLink(obj.GetSelfLink())
+	ret.SetGeneration(obj.GetGeneration())
+	ret.SetUID(obj.GetUID())
+	ret.SetResourceVersion(obj.GetResourceVersion())
+	ret.SetManagedFields(obj.GetManagedFields())
+	ret.SetFinalizers(obj.GetFinalizers())
+
+	return ret, nil
 }

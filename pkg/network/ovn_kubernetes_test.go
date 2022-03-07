@@ -64,7 +64,7 @@ func TestRenderOVNKubernetes(t *testing.T) {
 
 	bootstrapResult := &bootstrap.BootstrapResult{
 		OVN: bootstrap.OVNBootstrapResult{
-			MasterIPs: []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
+			MasterAddresses: []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
 			OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 				NodeMode: "full",
 			},
@@ -115,7 +115,7 @@ func TestRenderOVNKubernetesIPv6(t *testing.T) {
 
 	bootstrapResult := &bootstrap.BootstrapResult{
 		OVN: bootstrap.OVNBootstrapResult{
-			MasterIPs: []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
+			MasterAddresses: []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
 			OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 				NodeMode: "full",
 			},
@@ -131,7 +131,7 @@ func TestRenderOVNKubernetesIPv6(t *testing.T) {
 
 	bootstrapResult = &bootstrap.BootstrapResult{
 		OVN: bootstrap.OVNBootstrapResult{
-			MasterIPs: []string{"fd01::1", "fd01::2", "fd01::3"},
+			MasterAddresses: []string{"fd01::1", "fd01::2", "fd01::3"},
 			OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 				NodeMode: "full",
 			},
@@ -356,7 +356,7 @@ election-retry-period=26`,
 
 			bootstrapResult := &bootstrap.BootstrapResult{
 				OVN: bootstrap.OVNBootstrapResult{
-					MasterIPs: tc.masterIPs,
+					MasterAddresses: tc.masterIPs,
 					OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 						NodeMode: "full",
 					},
@@ -1289,7 +1289,7 @@ metadata:
 
 			bootstrapResult := &bootstrap.BootstrapResult{
 				OVN: bootstrap.OVNBootstrapResult{
-					MasterIPs:               []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
+					MasterAddresses:         []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
 					ExistingMasterDaemonset: master,
 					ExistingNodeDaemonset:   node,
 					OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
@@ -1565,7 +1565,7 @@ func TestRenderOVNKubernetesDualStackPrecedenceOverUpgrade(t *testing.T) {
 	// the current cluster is single-stack and has version 1.9.9
 	bootstrapResult := &bootstrap.BootstrapResult{
 		OVN: bootstrap.OVNBootstrapResult{
-			MasterIPs: []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
+			MasterAddresses: []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
 			ExistingMasterDaemonset: &appsv1.DaemonSet{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "apps/v1",
@@ -1686,7 +1686,7 @@ func TestRenderOVNKubernetesOVSFlowsConfigMap(t *testing.T) {
 			g := NewGomegaWithT(t)
 			bootstrapResult := &bootstrap.BootstrapResult{
 				OVN: bootstrap.OVNBootstrapResult{
-					MasterIPs: []string{"1.2.3.4"},
+					MasterAddresses: []string{"1.2.3.4"},
 					OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 						GatewayMode: "shared",
 					},

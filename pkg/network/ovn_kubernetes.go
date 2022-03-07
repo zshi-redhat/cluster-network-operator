@@ -39,6 +39,7 @@ const OVN_NB_PORT = "9641"
 const OVN_SB_PORT = "9642"
 const OVN_NB_RAFT_PORT = "9643"
 const OVN_SB_RAFT_PORT = "9644"
+const OVN_SB_ROUTE_PORT = "443"
 const CLUSTER_CONFIG_NAME = "cluster-config-v1"
 const CLUSTER_CONFIG_NAMESPACE = "kube-system"
 const OVN_CERT_CN = "ovn"
@@ -70,7 +71,8 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 
 	// TODO: Fix operator behavior when running in a cluster with an externalized control plane.
 	// For now, return an error since we don't have any master nodes to run the ovn-master daemonset.
-	if bootstrapResult.Infra.ExternalControlPlane {
+	var hypershift string = os.Getenv("HYPERSHIFT")
+	if bootstrapResult.Infra.ExternalControlPlane && hypershift != "true" {
 		return nil, fmt.Errorf("Unable to render OVN in a cluster with an external control plane")
 	}
 
@@ -127,6 +129,17 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 		nb_inactivity_probe = "60000"
 		klog.Infof("OVN_NB_INACTIVITY_PROBE env var is not defined. Using: %s", nb_inactivity_probe)
 	}
+
+	// Hypershift
+	data.Data["ManagementClusterName"] = os.Getenv("MANAGEMENT_CLUSTER_NAME")
+	data.Data["ManagementClusterDomain"] = os.Getenv("MANAGEMENT_CLUSTER_DOMAIN")
+	data.Data["HostedClusterNamespace"] = os.Getenv("HOSTED_CLUSTER_NAMESPACE")
+	data.Data["OvnkubeMasterReplicas"] = len(bootstrapResult.OVN.MasterIPs)
+
+	// sbdb route in the format of "ssl://ovnkube-sbdb-<hostedcluster namespace>.apps.<hostedcluster domain name>:443"
+	data.Data["OVN_NB_DB_ROUTE"] = fmt.Sprintf("ssl://ovnkube-sbdb-%s.apps.%s:%s", os.Getenv("HOSTED_CLUSTER_NAMESPACE"), os.Getenv("MANAGEMENT_CLUSTER_DOMAIN"), OVN_SB_ROUTE_PORT)
+	data.Data["OVN_SB_DB_ROUTE"] = fmt.Sprintf("ssl://ovnkube-sbdb-%s.apps.%s:%s", os.Getenv("HOSTED_CLUSTER_NAMESPACE"), os.Getenv("MANAGEMENT_CLUSTER_DOMAIN"), OVN_SB_ROUTE_PORT)
+
 	data.Data["OVN_NB_INACTIVITY_PROBE"] = nb_inactivity_probe
 	data.Data["OVN_NB_DB_LIST"] = dbList(bootstrapResult.OVN.MasterIPs, OVN_NB_PORT)
 	data.Data["OVN_SB_DB_LIST"] = dbList(bootstrapResult.OVN.MasterIPs, OVN_SB_PORT)
@@ -225,7 +238,14 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 		data.Data["IsSNO"] = false
 	}
 
-	manifests, err := render.RenderDir(filepath.Join(manifestDir, "network/ovn-kubernetes"), &data)
+	var manifestPath string
+	if hypershift != "true" {
+		manifestPath = "network/ovn-kubernetes"
+	} else {
+		manifestPath = "hypershift/ovn-kubernetes"
+	}
+
+	manifests, err := render.RenderDir(filepath.Join(manifestDir, manifestPath), &data)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to render manifests")
 	}
@@ -623,52 +643,60 @@ func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.
 	controlPlaneReplicaCount, _ := strconv.Atoi(rcD.ControlPlane.Replicas)
 
 	var heartBeat int
+	var hypershift string = os.Getenv("HYPERSHIFT")
 
-	err = wait.PollImmediate(OVN_MASTER_DISCOVERY_POLL*time.Second, time.Duration(OVN_MASTER_DISCOVERY_TIMEOUT)*time.Second, func() (bool, error) {
-		matchingLabels := &crclient.MatchingLabels{"node-role.kubernetes.io/master": ""}
-		if err := kubeClient.List(context.TODO(), masterNodeList, matchingLabels); err != nil {
-			return false, err
-		}
-		if len(masterNodeList.Items) != 0 && controlPlaneReplicaCount == len(masterNodeList.Items) {
-			return true, nil
-		}
+	ovnMasterIPs := make([]string, controlPlaneReplicaCount)
 
-		heartBeat++
-		if heartBeat%3 == 0 {
-			klog.V(2).Infof("Waiting to complete OVN bootstrap: found (%d) master nodes out of (%d) expected: timing out in %d seconds",
-				len(masterNodeList.Items), controlPlaneReplicaCount, OVN_MASTER_DISCOVERY_TIMEOUT-OVN_MASTER_DISCOVERY_POLL*heartBeat)
-		}
-		return false, nil
-	})
-	if wait.ErrWaitTimeout == err {
-		klog.Warningf("Timeout exceeded while bootstraping OVN, expected amount of control plane nodes (%v) do not match found (%v): %s, continuing deployment with found replicas", controlPlaneReplicaCount, len(masterNodeList.Items))
-		// On certain types of cluster this condition will never be met (assisted installer, for example)
-		// As to not hold the reconciliation loop for too long on such clusters: dynamically modify the timeout
-		// to a shorter and shorter value. Never reach 0 however as that will result in a `PollInfinity`.
-		// Right now we'll do:
-		// - First reconciliation 250 second timeout
-		// - Second reconciliation 130 second timeout
-		// - >= Third reconciliation 10 second timeout
-		if OVN_MASTER_DISCOVERY_TIMEOUT-OVN_MASTER_DISCOVERY_BACKOFF > 0 {
-			OVN_MASTER_DISCOVERY_TIMEOUT = OVN_MASTER_DISCOVERY_TIMEOUT - OVN_MASTER_DISCOVERY_BACKOFF
-		}
-	} else if err != nil {
-		return nil, fmt.Errorf("Unable to bootstrap OVN, err: %v", err)
-	}
-
-	ovnMasterIPs := make([]string, len(masterNodeList.Items))
-	for i, masterNode := range masterNodeList.Items {
-		var ip string
-		for _, address := range masterNode.Status.Addresses {
-			if address.Type == corev1.NodeInternalIP {
-				ip = address.Address
-				break
+	if hypershift != "true" {
+		err = wait.PollImmediate(OVN_MASTER_DISCOVERY_POLL*time.Second, time.Duration(OVN_MASTER_DISCOVERY_TIMEOUT)*time.Second, func() (bool, error) {
+			matchingLabels := &crclient.MatchingLabels{"node-role.kubernetes.io/master": ""}
+			if err := kubeClient.List(context.TODO(), masterNodeList, matchingLabels); err != nil {
+				return false, err
 			}
+			if len(masterNodeList.Items) != 0 && controlPlaneReplicaCount == len(masterNodeList.Items) {
+				return true, nil
+			}
+
+			heartBeat++
+			if heartBeat%3 == 0 {
+				klog.V(2).Infof("Waiting to complete OVN bootstrap: found (%d) master nodes out of (%d) expected: timing out in %d seconds",
+					len(masterNodeList.Items), controlPlaneReplicaCount, OVN_MASTER_DISCOVERY_TIMEOUT-OVN_MASTER_DISCOVERY_POLL*heartBeat)
+			}
+			return false, nil
+		})
+		if wait.ErrWaitTimeout == err {
+			klog.Warningf("Timeout exceeded while bootstraping OVN, expected amount of control plane nodes (%v) do not match found (%v): %s, continuing deployment with found replicas", controlPlaneReplicaCount, len(masterNodeList.Items))
+			// On certain types of cluster this condition will never be met (assisted installer, for example)
+			// As to not hold the reconciliation loop for too long on such clusters: dynamically modify the timeout
+			// to a shorter and shorter value. Never reach 0 however as that will result in a `PollInfinity`.
+			// Right now we'll do:
+			// - First reconciliation 250 second timeout
+			// - Second reconciliation 130 second timeout
+			// - >= Third reconciliation 10 second timeout
+			if OVN_MASTER_DISCOVERY_TIMEOUT-OVN_MASTER_DISCOVERY_BACKOFF > 0 {
+				OVN_MASTER_DISCOVERY_TIMEOUT = OVN_MASTER_DISCOVERY_TIMEOUT - OVN_MASTER_DISCOVERY_BACKOFF
+			}
+		} else if err != nil {
+			return nil, fmt.Errorf("Unable to bootstrap OVN, err: %v", err)
 		}
-		if ip == "" {
-			return nil, fmt.Errorf("No InternalIP found on master node '%s'", masterNode.Name)
+
+		for i, masterNode := range masterNodeList.Items {
+			var ip string
+			for _, address := range masterNode.Status.Addresses {
+				if address.Type == corev1.NodeInternalIP {
+					ip = address.Address
+					break
+				}
+			}
+			if ip == "" {
+				return nil, fmt.Errorf("No InternalIP found on master node '%s'", masterNode.Name)
+			}
+			ovnMasterIPs[i] = ip
 		}
-		ovnMasterIPs[i] = ip
+	} else {
+		for i := 0; i < controlPlaneReplicaCount; i++ {
+			ovnMasterIPs[i] = fmt.Sprintf("ovnkube-master-%d.ovnkube-master.%s.svc.cluster.local", i, os.Getenv("HOSTED_CLUSTER_NAMESPACE"))
+		}
 	}
 
 	sort.Strings(ovnMasterIPs)

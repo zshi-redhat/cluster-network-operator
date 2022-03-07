@@ -3,11 +3,12 @@ package operconfig
 import (
 	"context"
 	"fmt"
-	"k8s.io/client-go/util/retry"
 	"log"
 	"reflect"
 	"strings"
 	"time"
+
+	"k8s.io/client-go/util/retry"
 
 	"github.com/pkg/errors"
 

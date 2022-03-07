@@ -50,11 +50,15 @@ const OVN_NODE_MODE_DPU_HOST = "dpu-host"
 const OVN_NODE_MODE_DPU = "dpu"
 const OVN_NODE_SELECTOR_DPU = "network.operator.openshift.io/dpu: ''"
 
-var OVN_MASTER_DISCOVERY_TIMEOUT = 250
+var OVN_MASTER_DISCOVERY_TIMEOUT = 20
 
 const (
-	OVSFlowsConfigMapName   = "ovs-flows-config"
-	OVSFlowsConfigNamespace = names.APPLIED_NAMESPACE
+	OVSFlowsConfigMapName          = "ovs-flows-config"
+	OVSFlowsConfigNamespace        = names.APPLIED_NAMESPACE
+	OVN_SB_ROUTE_PORT              = "443"
+	managementClusterName   string = "management"
+	managementClusterDomain string = "zshi-2022-03-08-management.devcluster.openshift.com"
+	hostedClusterNamespace  string = "clusters-ovn-hypershift"
 )
 
 // renderOVNKubernetes returns the manifests for the ovn-kubernetes.
@@ -68,7 +72,7 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 
 	// TODO: Fix operator behavior when running in a cluster with an externalized control plane.
 	// For now, return an error since we don't have any master nodes to run the ovn-master daemonset.
-	if bootstrapResult.Infra.ExternalControlPlane {
+	if !bootstrapResult.Infra.ExternalControlPlane {
 		return nil, fmt.Errorf("Unable to render OVN in a cluster with an external control plane")
 	}
 
@@ -125,6 +129,17 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 		nb_inactivity_probe = "60000"
 		klog.Infof("OVN_NB_INACTIVITY_PROBE env var is not defined. Using: %s", nb_inactivity_probe)
 	}
+
+	// Hypershift
+	data.Data["ManagementClusterName"] = managementClusterName
+	data.Data["ManagementClusterDomain"] = managementClusterDomain
+	data.Data["HostedClusterNamespace"] = hostedClusterNamespace
+	data.Data["OvnkubeMasterReplicas"] = len(bootstrapResult.OVN.MasterIPs)
+	data.Data["OVN_NB_DB_ROUTE"] = fmt.Sprintf("ssl://ovnkube-sbdb-%s.apps.%s:%s", hostedClusterNamespace, managementClusterDomain, OVN_SB_ROUTE_PORT)
+	data.Data["OVN_SB_DB_ROUTE"] = fmt.Sprintf("ssl://ovnkube-sbdb-%s.apps.%s:%s", hostedClusterNamespace, managementClusterDomain, OVN_SB_ROUTE_PORT)
+	// data.Data["OVN_NB_DB_ROUTE"] = "ssl://ovnkube-sbdb-clusters-ovn-hypershift.apps.zshi-2022-03-08-management.devcluster.openshift.com:443"
+	// data.Data["OVN_SB_DB_ROUTE"] = "ssl://ovnkube-sbdb-clusters-ovn-hypershift.apps.zshi-2022-03-08-management.devcluster.openshift.com:443"
+
 	data.Data["OVN_NB_INACTIVITY_PROBE"] = nb_inactivity_probe
 	data.Data["OVN_NB_DB_LIST"] = dbList(bootstrapResult.OVN.MasterIPs, OVN_NB_PORT)
 	data.Data["OVN_SB_DB_LIST"] = dbList(bootstrapResult.OVN.MasterIPs, OVN_SB_PORT)
@@ -223,7 +238,7 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 		data.Data["IsSNO"] = false
 	}
 
-	manifests, err := render.RenderDir(filepath.Join(manifestDir, "network/ovn-kubernetes"), &data)
+	manifests, err := render.RenderDir(filepath.Join(manifestDir, "hypershift/ovn-kubernetes"), &data)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to render manifests")
 	}
@@ -643,19 +658,26 @@ func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.
 		return nil, fmt.Errorf("Unable to bootstrap OVN, err: %v", err)
 	}
 
-	ovnMasterIPs := make([]string, len(masterNodeList.Items))
-	for i, masterNode := range masterNodeList.Items {
-		var ip string
-		for _, address := range masterNode.Status.Addresses {
-			if address.Type == corev1.NodeInternalIP {
-				ip = address.Address
-				break
+	ovnMasterIPs := make([]string, controlPlaneReplicaCount)
+
+	if len(masterNodeList.Items) > 0 {
+		for i, masterNode := range masterNodeList.Items {
+			var ip string
+			for _, address := range masterNode.Status.Addresses {
+				if address.Type == corev1.NodeInternalIP {
+					ip = address.Address
+					break
+				}
 			}
+			if ip == "" {
+				return nil, fmt.Errorf("No InternalIP found on master node '%s'", masterNode.Name)
+			}
+			ovnMasterIPs[i] = ip
 		}
-		if ip == "" {
-			return nil, fmt.Errorf("No InternalIP found on master node '%s'", masterNode.Name)
+	} else {
+		for i := 0; i < controlPlaneReplicaCount; i++ {
+			ovnMasterIPs[i] = fmt.Sprintf("ovnkube-master-%d.ovnkube-master.%s.svc.cluster.local", i, hostedClusterNamespace)
 		}
-		ovnMasterIPs[i] = ip
 	}
 
 	sort.Strings(ovnMasterIPs)

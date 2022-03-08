@@ -1,0 +1,69 @@
+---
+# The ovnconfig config file. Used by node processes.
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ovnkube-config
+  namespace: openshift-ovn-kubernetes
+data:
+  ovnkube.conf:   |-
+    [default]
+    mtu="{{.MTU}}"
+    {{- if .RoutableMTU }}
+    routable-mtu="{{.RoutableMTU}}"
+    {{- end }}
+    cluster-subnets="{{.OVN_cidr}}"
+    encap-port="{{.GenevePort}}"
+    enable-lflow-cache=true
+    lflow-cache-limit-kb=1048576
+
+    [kubernetes]
+    service-cidrs="{{.OVN_service_cidr}}"
+    ovn-config-namespace="openshift-ovn-kubernetes"
+    apiserver="{{.K8S_APISERVER}}"
+    host-network-namespace="openshift-host-network"
+    platform-type="{{.PlatformType}}"
+
+    [ovnkubernetesfeature]
+    enable-egress-ip=true
+    enable-egress-firewall=true
+
+    [gateway]
+    mode={{.OVN_GATEWAY_MODE}}
+    nodeport=true
+
+---
+# extra cluster
+# The ovnconfig config file. Used by master processes.
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ovnkube-config
+  namespace: {{.HostedClusterNamespace}}
+  clusterName: {{.ManagementClusterName}}
+data:
+  ovnkube.conf:   |-
+    [default]
+    mtu="{{.MTU}}"
+    {{- if .RoutableMTU }}
+    routable-mtu="{{.RoutableMTU}}"
+    {{- end }}
+    cluster-subnets="{{.OVN_cidr}}"
+    encap-port="{{.GenevePort}}"
+    enable-lflow-cache=true
+    lflow-cache-limit-kb=1048576
+
+    [kubernetes]
+    service-cidrs="{{.OVN_service_cidr}}"
+    ovn-config-namespace="openshift-ovn-kubernetes"
+    kubeconfig="/etc/kube/config/kubeconfig"
+    host-network-namespace="openshift-host-network"
+    platform-type="{{.PlatformType}}"
+
+    [ovnkubernetesfeature]
+    enable-egress-ip=true
+    enable-egress-firewall=true
+
+    [gateway]
+    mode={{.OVN_GATEWAY_MODE}}
+    nodeport=true

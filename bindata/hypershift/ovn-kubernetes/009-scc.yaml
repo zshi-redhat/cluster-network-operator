@@ -1,0 +1,7 @@
+kind: SecurityContextConstraints
+apiVersion: security.openshift.io/v1
+metadata:
+  name: anyuid
+  clusterName: {{.ManagementClusterName}}
+users:
+- system:serviceaccount:{{.HostedClusterNamespace}}:ovn-kubernetes-controller

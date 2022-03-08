@@ -57,7 +57,7 @@ const (
 	OVSFlowsConfigNamespace        = names.APPLIED_NAMESPACE
 	OVN_SB_ROUTE_PORT              = "443"
 	managementClusterName   string = "management"
-	managementClusterDomain string = "zshi-2022-03-08-management.devcluster.openshift.com"
+	managementClusterDomain string = "zshi-2022-03-09-management-ovn.devcluster.openshift.com"
 	hostedClusterNamespace  string = "clusters-ovn-hypershift"
 )
 

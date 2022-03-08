@@ -1,0 +1,18 @@
+---
+# ovnkube-sbdb route exposed in extra cluster
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ovnkube-sbdb
+  namespace: {{.HostedClusterNamespace}}
+  clusterName: {{.ManagementClusterName}}
+spec:
+  host: ovnkube-sbdb-{{.HostedClusterNamespace}}.apps.{{.ManagementClusterDomain}}
+  port:
+    targetPort: {{.OVN_SB_PORT}}
+  tls:
+    insecureEdgeTerminationPolicy: None
+    termination: passthrough
+  to:
+    kind: Service
+    name: ovnkube-master

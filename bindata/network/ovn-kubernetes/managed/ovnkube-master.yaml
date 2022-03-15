@@ -46,7 +46,6 @@ spec:
               matchLabels:
                 app: ovnkube-master
             topologyKey: topology.kubernetes.io/zone
-      serviceAccountName: ovn-kubernetes-controller-management
       priorityClassName: "system-cluster-critical"
       containers:
       # ovn-northd: convert network objects in nbdb to flows in sbdb

@@ -246,14 +246,15 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 		data.Data["IsSNO"] = false
 	}
 
-	var manifestPath string
-	if hypershift != "true" {
-		manifestPath = "network/ovn-kubernetes"
+	manifestDirs := make([]string, 2)
+	manifestDirs[0] = filepath.Join(manifestDir, "network/ovn-kubernetes/common")
+	if hypershift == "true" {
+		manifestDirs[1] = filepath.Join(manifestDir, "network/ovn-kubernetes/managed")
 	} else {
-		manifestPath = "hypershift/ovn-kubernetes"
+		manifestDirs[1] = filepath.Join(manifestDir, "network/ovn-kubernetes/self-hosted")
 	}
 
-	manifests, err := render.RenderDir(filepath.Join(manifestDir, manifestPath), &data)
+	manifests, err := render.RenderDirs(manifestDirs, &data)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to render manifests")
 	}

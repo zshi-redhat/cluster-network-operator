@@ -100,6 +100,10 @@ func add(mgr manager.Manager, r *ReconcileOperConfig) error {
 	if err != nil {
 		return err
 	}
+	err = c.Watch(&source.Kind{Type: &appsv1.StatefulSet{}}, &handler.EnqueueRequestForObject{})
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -264,19 +268,36 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 	}
 	objs = append([]*uns.Unstructured{app}, objs...)
 
-	// Set up the Pod reconciler before we start creating DaemonSets/Deployments
+	// Set up the Pod reconciler before we start creating DaemonSets/Deployments/StatefulSets
 	daemonSets := []types.NamespacedName{}
 	deployments := []types.NamespacedName{}
+	statefulSets := []types.NamespacedName{}
 	relatedObjects := []configv1.ObjectReference{}
+	relatedClusterObjects := []network.RelatedObject{}
 	for _, obj := range objs {
 		if obj.GetAPIVersion() == "apps/v1" && obj.GetKind() == "DaemonSet" {
 			daemonSets = append(daemonSets, types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()})
 		} else if obj.GetAPIVersion() == "apps/v1" && obj.GetKind() == "Deployment" {
 			deployments = append(deployments, types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()})
+		} else if obj.GetAPIVersion() == "apps/v1" && obj.GetKind() == "StatefulSet" {
+			statefulSets = append(statefulSets, types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()})
 		}
 		restMapping, err := r.mapper.RESTMapping(obj.GroupVersionKind().GroupKind())
 		if err != nil {
 			log.Printf("Failed to get REST mapping for storing related object: %v", err)
+			continue
+		}
+		if obj.GetClusterName() == cnoclient.ManagementClusterName {
+			relatedClusterObjects = append(relatedClusterObjects, network.RelatedObject{
+				Reference: configv1.ObjectReference{
+					Group:     obj.GetObjectKind().GroupVersionKind().Group,
+					Resource:  restMapping.Resource.Resource,
+					Name:      obj.GetName(),
+					Namespace: obj.GetNamespace(),
+				},
+				ClusterName: obj.GetClusterName(),
+			})
+			// Don't add management cluster objects in relatedObjects
 			continue
 		}
 		relatedObjects = append(relatedObjects, configv1.ObjectReference{
@@ -328,11 +349,13 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 
 	r.status.SetDaemonSets(daemonSets)
 	r.status.SetDeployments(deployments)
+	r.status.SetStatefulSets(statefulSets)
 	r.status.SetRelatedObjects(relatedObjects)
 
 	allResources := []types.NamespacedName{}
 	allResources = append(allResources, daemonSets...)
 	allResources = append(allResources, deployments...)
+	allResources = append(allResources, statefulSets...)
 	r.podReconciler.SetResources(allResources)
 
 	// Apply the objects to the cluster

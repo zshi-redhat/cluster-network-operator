@@ -27,14 +27,16 @@ import (
 	op_netopv1 "github.com/openshift/api/networkoperator/v1"
 	operv1 "github.com/openshift/api/operator/v1"
 	netopv1 "github.com/openshift/cluster-network-operator/pkg/apis/network/v1"
+	hyperv1 "github.com/openshift/hypershift/api/v1alpha1"
 	machineapi "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	defaultResyncPeriod = 5 * time.Minute
-	DefaultClusterName  = "default"
+	defaultResyncPeriod   = 5 * time.Minute
+	DefaultClusterName    = "default"
+	ManagementClusterName = "management"
 )
 
 // OperatorClusterClient is a bag of holding for object clients & informers.
@@ -298,6 +300,9 @@ func (c *OperatorClusterClient) AddCustomInformer(inf cache.SharedInformer) {
 func RegisterTypes(s *runtime.Scheme) {
 	// Add types to the scheme.
 	if err := operv1.Install(s); err != nil {
+		log.Fatal(err)
+	}
+	if err := hyperv1.AddToScheme(s); err != nil {
 		log.Fatal(err)
 	}
 	if err := configv1.Install(s); err != nil {

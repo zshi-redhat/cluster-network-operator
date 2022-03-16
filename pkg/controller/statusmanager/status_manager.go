@@ -6,13 +6,17 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/ghodss/yaml"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operv1 "github.com/openshift/api/operator/v1"
+	cnoclient "github.com/openshift/cluster-network-operator/pkg/client"
 	"github.com/openshift/cluster-network-operator/pkg/names"
+	"github.com/openshift/cluster-network-operator/pkg/network"
+	hyperv1 "github.com/openshift/hypershift/api/v1alpha1"
 	cohelpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
 	operstatus "github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -22,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	uns "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
@@ -48,8 +53,7 @@ const (
 type StatusManager struct {
 	sync.Mutex
 
-	client crclient.Client
-	mapper meta.RESTMapper
+	client cnoclient.Client
 	name   string
 
 	failing         [maxStatusLevel]*operv1.OperatorCondition
@@ -57,11 +61,43 @@ type StatusManager struct {
 
 	daemonSets     []types.NamespacedName
 	deployments    []types.NamespacedName
+	statefulSets   []types.NamespacedName
 	relatedObjects []configv1.ObjectReference
+
+	hypershiftConfig network.HypershiftConfig
 }
 
-func New(client crclient.Client, mapper meta.RESTMapper, name string) *StatusManager {
-	return &StatusManager{client: client, mapper: mapper, name: name}
+func New(client cnoclient.Client, name string) *StatusManager {
+	return &StatusManager{
+		client:           client,
+		name:             name,
+		hypershiftConfig: network.NewHypershiftConfig(),
+	}
+}
+
+// setCOAnnotation sets an annotation on the clusterOperator network; or unsets it if value is nil
+func (status *StatusManager) setCOAnnotation(obj *configv1.ClusterOperator, key string, value *string) error {
+	new := obj.DeepCopy()
+	anno := new.GetAnnotations()
+
+	existing, set := anno[key]
+	if value != nil && set && existing == *value {
+		return nil
+	}
+	if !set && value == nil {
+		return nil
+	}
+
+	if value != nil {
+		if anno == nil {
+			anno = map[string]string{}
+		}
+		anno[key] = *value
+	} else {
+		delete(anno, key)
+	}
+	new.SetAnnotations(anno)
+	return status.client.Default().CRClient().Patch(context.TODO(), new, crclient.MergeFrom(obj))
 }
 
 // deleteRelatedObjects checks for related objects attached to ClusterOperator and deletes
@@ -84,7 +120,8 @@ func (status *StatusManager) deleteRelatedObjectsNotRendered(co *configv1.Cluste
 				Group:    currentObj.Group,
 				Resource: currentObj.Resource,
 			}
-			gvk, err := status.mapper.KindFor(gvr)
+			// TODO: delete resources in hypershift management cluster
+			gvk, err := status.client.Default().RESTMapper().KindFor(gvr)
 			if err != nil {
 				log.Printf("Error getting GVK of object for deletion: %v", err)
 				status.relatedObjects = append(status.relatedObjects, currentObj)
@@ -106,7 +143,7 @@ func (status *StatusManager) deleteRelatedObjectsNotRendered(co *configv1.Cluste
 			objToDelete.SetName(currentObj.Name)
 			objToDelete.SetNamespace(currentObj.Namespace)
 			objToDelete.SetGroupVersionKind(gvk)
-			err = status.client.Delete(context.TODO(), objToDelete, crclient.PropagationPolicy("Background"))
+			err = status.client.Default().CRClient().Delete(context.TODO(), objToDelete, crclient.PropagationPolicy("Background"))
 			if err != nil {
 				log.Printf("Error deleting related object: %v", err)
 				if !errors.IsNotFound(err) {
@@ -125,7 +162,7 @@ func (status *StatusManager) set(reachedAvailableLevel bool, conditions ...operv
 	// Set status on the network.operator object
 	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		oc := &operv1.Network{ObjectMeta: metav1.ObjectMeta{Name: names.OPERATOR_CONFIG}}
-		err := status.client.Get(context.TODO(), types.NamespacedName{Name: names.OPERATOR_CONFIG}, oc)
+		err := status.client.Default().CRClient().Get(context.TODO(), types.NamespacedName{Name: names.OPERATOR_CONFIG}, oc)
 		if err != nil {
 			// Should never happen outside of unit tests
 			return err
@@ -141,7 +178,7 @@ func (status *StatusManager) set(reachedAvailableLevel bool, conditions ...operv
 		// a 4.6->4.7 upgrade).
 		if v1helpers.FindOperatorCondition(oc.Status.Conditions, operv1.OperatorStatusTypeAvailable) == nil {
 			co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: status.name}}
-			err := status.client.Get(context.TODO(), types.NamespacedName{Name: status.name}, co)
+			err := status.client.Default().CRClient().Get(context.TODO(), types.NamespacedName{Name: status.name}, co)
 			if err != nil {
 				log.Printf("failed to retrieve ClusterOperator object: %v - continuing", err)
 			}
@@ -192,7 +229,7 @@ func (status *StatusManager) set(reachedAvailableLevel bool, conditions ...operv
 			buf = []byte(fmt.Sprintf("(failed to convert to YAML: %s)", err))
 		}
 
-		if err := status.client.Update(context.TODO(), oc); err != nil {
+		if err := status.client.Default().CRClient().Update(context.TODO(), oc); err != nil {
 			return err
 		}
 		log.Printf("Set operator conditions:\n%s", buf)
@@ -203,12 +240,86 @@ func (status *StatusManager) set(reachedAvailableLevel bool, conditions ...operv
 		log.Printf("Failed to set operator status: %v", err)
 	}
 
+	if status.hypershiftConfig.Enabled {
+		err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			hcp := &hyperv1.HostedControlPlane{ObjectMeta: metav1.ObjectMeta{Name: status.hypershiftConfig.Name}}
+			gvr := schema.GroupVersionResource{
+				Group:    "hypershift.openshift.io",
+				Version:  "v1alpha1",
+				Resource: "hostedcontrolplanes",
+			}
+			hcpObj, err := status.client.ClientFor(cnoclient.ManagementClusterName).Dynamic().Resource(gvr).Namespace(
+				status.hypershiftConfig.Namespace).Get(context.TODO(), status.hypershiftConfig.Name, metav1.GetOptions{})
+			if err != nil {
+				if errors.IsNotFound(err) {
+					log.Printf("Did not find hostedControlPlane")
+				} else {
+					return err
+				}
+			} else {
+				err := runtime.DefaultUnstructuredConverter.FromUnstructured(hcpObj.UnstructuredContent(), hcp)
+				if err != nil {
+					return err
+				}
+			}
+
+			oldStatus := hcp.Status.DeepCopy()
+			if operStatus == nil {
+				meta.SetStatusCondition(&hcp.Status.Conditions, metav1.Condition{
+					Type:    "NetworkOperatorAvailable",
+					Status:  metav1.ConditionUnknown,
+					Reason:  "NoNetworkOperConfig",
+					Message: "No networks.operator.openshift.io cluster found",
+				})
+			} else {
+				for _, cond := range operStatus.Conditions {
+					if cond.Type == operv1.OperatorStatusTypeProgressing {
+						newCondition := metav1.Condition{
+							Type:    network.NetworkOperatorStatusTypeProgressing,
+							Status:  metav1.ConditionStatus(cond.Status),
+							Reason:  cond.Reason,
+							Message: cond.Message,
+						}
+						meta.SetStatusCondition(&hcp.Status.Conditions, newCondition)
+					}
+					if cond.Type == operv1.OperatorStatusTypeDegraded {
+						newCondition := metav1.Condition{
+							Type:    network.NetworkOperatorStatusTypeDegraded,
+							Status:  metav1.ConditionStatus(cond.Status),
+							Reason:  cond.Reason,
+							Message: cond.Message,
+						}
+						meta.SetStatusCondition(&hcp.Status.Conditions, newCondition)
+					}
+				}
+			}
+
+			if reflect.DeepEqual(*oldStatus, hcp.Status) {
+				return nil
+			}
+
+			buf, err := yaml.Marshal(hcp.Status.Conditions)
+			if err != nil {
+				buf = []byte(fmt.Sprintf("(failed to convert to YAML: %s)", err))
+			}
+
+			if err := status.client.ClientFor(cnoclient.ManagementClusterName).CRClient().Status().Update(context.TODO(), hcp); err != nil {
+				return err
+			}
+			log.Printf("Set HostedControlPlane conditions:\n%s", buf)
+			return nil
+		})
+		if err != nil {
+			log.Printf("Failed to set HostedControlPlane: %v", err)
+		}
+	}
+
 	// Set status conditions on the network clusteroperator object.
 	// TODO: enable the library-go ClusterOperatorStatusController, which will
 	// do this for us. We can't use that yet, because it doesn't allow dynamic RelatedObjects[].
 	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: status.name}}
-		err := status.client.Get(context.TODO(), types.NamespacedName{Name: status.name}, co)
+		err := status.client.Default().CRClient().Get(context.TODO(), types.NamespacedName{Name: status.name}, co)
 		isNotFound := errors.IsNotFound(err)
 		if err != nil && !isNotFound {
 			return err
@@ -218,6 +329,18 @@ func (status *StatusManager) set(reachedAvailableLevel bool, conditions ...operv
 		status.deleteRelatedObjectsNotRendered(co)
 		if status.relatedObjects != nil {
 			co.Status.RelatedObjects = status.relatedObjects
+		}
+
+		if status.hypershiftConfig.RelatedObjects != nil {
+			objs := []string{}
+			for _, obj := range status.hypershiftConfig.RelatedObjects {
+				objs = append(objs, fmt.Sprintf("%s/%s/%s", obj.ClusterName, obj.Reference.Namespace, obj.Reference.Name))
+			}
+			annotValue := strings.Join(objs, ",")
+			err := status.setCOAnnotation(co, "network.operator.openshift.io/relatedObjects", &annotValue)
+			if err != nil {
+				return err
+			}
 		}
 
 		if operStatus == nil {
@@ -249,13 +372,13 @@ func (status *StatusManager) set(reachedAvailableLevel bool, conditions ...operv
 		}
 
 		if isNotFound {
-			if err := status.client.Create(context.TODO(), co); err != nil {
+			if err := status.client.Default().CRClient().Create(context.TODO(), co); err != nil {
 				return err
 			}
 			log.Printf("Set ClusterOperator conditions:\n%s", buf)
 			return nil
 		}
-		if err := status.client.Status().Update(context.TODO(), co); err != nil {
+		if err := status.client.Default().CRClient().Status().Update(context.TODO(), co); err != nil {
 			return err
 		}
 		log.Printf("Set ClusterOperator conditions:\n%s", buf)
@@ -322,6 +445,12 @@ func (status *StatusManager) SetDeployments(deployments []types.NamespacedName) 
 	status.Lock()
 	defer status.Unlock()
 	status.deployments = deployments
+}
+
+func (status *StatusManager) SetStatefulSets(statefulSets []types.NamespacedName) {
+	status.Lock()
+	defer status.Unlock()
+	status.statefulSets = statefulSets
 }
 
 func (status *StatusManager) SetRelatedObjects(relatedObjects []configv1.ObjectReference) {

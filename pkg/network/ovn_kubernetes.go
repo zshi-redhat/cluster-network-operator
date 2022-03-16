@@ -18,6 +18,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-network-operator/pkg/bootstrap"
+	"github.com/openshift/cluster-network-operator/pkg/client"
 	"github.com/openshift/cluster-network-operator/pkg/names"
 	"github.com/openshift/cluster-network-operator/pkg/render"
 	"github.com/openshift/cluster-network-operator/pkg/util/k8s"
@@ -56,7 +57,6 @@ var OVN_MASTER_DISCOVERY_TIMEOUT = 250
 const (
 	// TODO: get this from the route Status
 	OVN_SB_ROUTE_PORT       = "443"
-	MANAGEMENT_CLUSTER_NAME = "management"
 	OVSFlowsConfigMapName   = "ovs-flows-config"
 	OVSFlowsConfigNamespace = names.APPLIED_NAMESPACE
 )
@@ -135,7 +135,7 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 	}
 
 	// Hypershift
-	data.Data["ManagementClusterName"] = MANAGEMENT_CLUSTER_NAME
+	data.Data["ManagementClusterName"] = client.ManagementClusterName
 	data.Data["ManagementClusterDomain"] = os.Getenv("MANAGEMENT_CLUSTER_DOMAIN")
 	data.Data["HostedClusterNamespace"] = os.Getenv("HOSTED_CLUSTER_NAMESPACE")
 	data.Data["OvnkubeMasterReplicas"] = len(bootstrapResult.OVN.MasterAddresses)

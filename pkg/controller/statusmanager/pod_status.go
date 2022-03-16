@@ -12,6 +12,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operv1 "github.com/openshift/api/operator/v1"
+	cnoclient "github.com/openshift/cluster-network-operator/pkg/client"
 	"github.com/openshift/cluster-network-operator/pkg/names"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -36,8 +37,9 @@ const (
 // for pod-creating entities, as marshalled to json in an annotation
 type podState struct {
 	// "public" for marshalling to json, since we can't have complex keys
-	DaemonsetStates  []daemonsetState
-	DeploymentStates []deploymentState
+	DaemonsetStates   []daemonsetState
+	DeploymentStates  []deploymentState
+	StatefulsetStates []statefulsetState
 }
 
 // daemonsetState is the internal state we use to check if a rollout has
@@ -57,23 +59,31 @@ type deploymentState struct {
 	LastChangeTime time.Time
 }
 
+// statefulsetState is the same as daemonsetState.. but for statefulsets!
+type statefulsetState struct {
+	types.NamespacedName
+
+	LastSeenStatus appsv1.StatefulSetStatus
+	LastChangeTime time.Time
+}
+
 // SetFromPods sets the operator Degraded/Progressing/Available status, based on
-// the current status of the manager's DaemonSets and Deployments.
+// the current status of the manager's DaemonSets, Deployments and StatefulSets.
 func (status *StatusManager) SetFromPods() {
 	status.Lock()
 	defer status.Unlock()
 
 	targetLevel := os.Getenv("RELEASE_VERSION")
-	reachedAvailableLevel := (len(status.daemonSets) + len(status.deployments)) > 0
+	reachedAvailableLevel := (len(status.daemonSets) + len(status.deployments) + len(status.statefulSets)) > 0
 
 	progressing := []string{}
 	hung := []string{}
 
-	daemonsetStates, deploymentStates := status.getLastPodState()
+	daemonsetStates, deploymentStates, statefulsetStates := status.getLastPodState()
 
 	for _, dsName := range status.daemonSets {
 		ds := &appsv1.DaemonSet{}
-		if err := status.client.Get(context.TODO(), dsName, ds); err != nil {
+		if err := status.client.Default().CRClient().Get(context.TODO(), dsName, ds); err != nil {
 			log.Printf("Error getting DaemonSet %q: %v", dsName.String(), err)
 			progressing = append(progressing, fmt.Sprintf("Waiting for DaemonSet %q to be created", dsName.String()))
 			reachedAvailableLevel = false
@@ -95,7 +105,7 @@ func (status *StatusManager) SetFromPods() {
 			dsProgressing = true
 			// Check for any pods in CrashLoopBackOff state and mark the operator as degraded if so.
 			if !isNonCritical(ds) {
-				hung = append(hung, status.CheckCrashLoopBackOffPods(dsName, ds.Spec.Selector.MatchLabels, "DaemonSet")...)
+				hung = append(hung, status.CheckCrashLoopBackOffPods(dsName, ds.Spec.Selector.MatchLabels, "DaemonSet", cnoclient.DefaultClusterName)...)
 			}
 		} else if ds.Status.NumberAvailable == 0 { // NOTE: update this if we ever expect empty (unscheduled) daemonsets ~cdc
 			progressing = append(progressing, fmt.Sprintf("DaemonSet %q is not yet scheduled on any nodes", dsName.String()))
@@ -135,9 +145,70 @@ func (status *StatusManager) SetFromPods() {
 		}
 	}
 
+	for _, ssName := range status.statefulSets {
+		ss := &appsv1.StatefulSet{}
+		if err := status.client.ClientFor(cnoclient.ManagementClusterName).CRClient().Get(context.TODO(), ssName, ss); err != nil {
+			log.Printf("Error getting StatefulSet %q: %v", ssName.String(), err)
+			progressing = append(progressing, fmt.Sprintf("Waiting for StatefulSet %q to be created", ssName.String()))
+			reachedAvailableLevel = false
+			// Assume the OperConfig Controller is in the process of reconciling
+			// things; it will set a Degraded status if it fails.
+			continue
+		}
+
+		ssProgressing := false
+
+		if isNonCritical(ss) && ss.Status.ReadyReplicas == 0 && !status.installComplete {
+			progressing = append(progressing, fmt.Sprintf("StatefulSet %q is waiting for other operators to become ready", ssName.String()))
+			ssProgressing = true
+		} else if ss.Status.ReadyReplicas > 0 && ss.Status.ReadyReplicas < ss.Status.Replicas {
+			progressing = append(progressing, fmt.Sprintf("StatefulSet %q is not available (awaiting %d nodes)", ssName.String(), (ss.Status.Replicas-ss.Status.ReadyReplicas)))
+			ssProgressing = true
+			// Check for any pods in CrashLoopBackOff state and mark the operator as degraded if so.
+			if !isNonCritical(ss) {
+				hung = append(hung, status.CheckCrashLoopBackOffPods(ssName, ss.Spec.Selector.MatchLabels, "StatefulSet", cnoclient.ManagementClusterName)...)
+			}
+		} else if ss.Status.AvailableReplicas == 0 {
+			progressing = append(progressing, fmt.Sprintf("StatefulSet %q is not yet scheduled on any nodes", ssName.String()))
+			ssProgressing = true
+		} else if ss.Status.ObservedGeneration < ss.Generation {
+			progressing = append(progressing, fmt.Sprintf("StatefulSet %q update is being processed (generation %d, observed generation %d)", ssName.String(), ss.Generation, ss.Status.ObservedGeneration))
+			ssProgressing = true
+		}
+
+		if ss.Annotations["release.openshift.io/version"] != targetLevel {
+			reachedAvailableLevel = false
+		}
+
+		var ssHung *string
+
+		if ssProgressing && !isNonCritical(ss) {
+			reachedAvailableLevel = false
+
+			ssState, exists := statefulsetStates[ssName]
+			if !exists || !reflect.DeepEqual(ssState.LastSeenStatus, ss.Status) {
+				ssState.LastChangeTime = time.Now()
+				ss.Status.DeepCopyInto(&ssState.LastSeenStatus)
+				statefulsetStates[ssName] = ssState
+			}
+
+			// Catch hung rollouts
+			if exists && (time.Since(ssState.LastChangeTime)) > ProgressTimeout {
+				hung = append(hung, fmt.Sprintf("StatefulSet %q rollout is not making progress - last change %s", ssName.String(), ssState.LastChangeTime.Format(time.RFC3339)))
+				empty := ""
+				ssHung = &empty
+			}
+		} else {
+			delete(statefulsetStates, ssName)
+		}
+		if err := status.setSSAnnotation(ss, names.RolloutHungAnnotation, ssHung); err != nil {
+			log.Printf("Error setting StatefulSet %q annotation: %v", ssName, err)
+		}
+	}
+
 	for _, depName := range status.deployments {
 		dep := &appsv1.Deployment{}
-		if err := status.client.Get(context.TODO(), depName, dep); err != nil {
+		if err := status.client.Default().CRClient().Get(context.TODO(), depName, dep); err != nil {
 			log.Printf("Error getting Deployment %q: %v", depName.String(), err)
 			progressing = append(progressing, fmt.Sprintf("Waiting for Deployment %q to be created", depName.String()))
 			reachedAvailableLevel = false
@@ -156,7 +227,7 @@ func (status *StatusManager) SetFromPods() {
 			depProgressing = true
 			// Check for any pods in CrashLoopBackOff state and mark the operator as degraded if so.
 			if !isNonCritical(dep) {
-				hung = append(hung, status.CheckCrashLoopBackOffPods(depName, dep.Spec.Selector.MatchLabels, "Deployment")...)
+				hung = append(hung, status.CheckCrashLoopBackOffPods(depName, dep.Spec.Selector.MatchLabels, "Deployment", cnoclient.DefaultClusterName)...)
 			}
 		} else if dep.Status.AvailableReplicas == 0 {
 			progressing = append(progressing, fmt.Sprintf("Deployment %q is not yet scheduled on any nodes", depName.String()))
@@ -197,7 +268,7 @@ func (status *StatusManager) SetFromPods() {
 	}
 
 	status.setNotDegraded(PodDeployment)
-	if err := status.setLastPodState(daemonsetStates, deploymentStates); err != nil {
+	if err := status.setLastPodState(daemonsetStates, deploymentStates, statefulsetStates); err != nil {
 		log.Printf("Failed to set pod state (continuing): %+v\n", err)
 	}
 
@@ -240,25 +311,26 @@ func (status *StatusManager) SetFromPods() {
 	}
 }
 
-// getLastPodState reads the last-seen daemonset + deployment state
-// from the clusteroperator annotation and parses it. On error, it returns
-// an empty state, since this should not block updating operator status.
-func (status *StatusManager) getLastPodState() (map[types.NamespacedName]daemonsetState, map[types.NamespacedName]deploymentState) {
+// getLastPodState reads the last-seen daemonset + deployment + statefulset
+// states from the clusteroperator annotation and parses it. On error, it
+// returns an empty state, since this should not block updating operator status.
+func (status *StatusManager) getLastPodState() (map[types.NamespacedName]daemonsetState, map[types.NamespacedName]deploymentState, map[types.NamespacedName]statefulsetState) {
 	// with maps allocated
 	daemonsetStates := map[types.NamespacedName]daemonsetState{}
 	deploymentStates := map[types.NamespacedName]deploymentState{}
+	statefulsetStates := map[types.NamespacedName]statefulsetState{}
 
 	// Load the last-seen snapshot from our annotation
 	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: status.name}}
-	err := status.client.Get(context.TODO(), types.NamespacedName{Name: status.name}, co)
+	err := status.client.Default().CRClient().Get(context.TODO(), types.NamespacedName{Name: status.name}, co)
 	if err != nil {
 		log.Printf("Failed to get ClusterOperator: %v", err)
-		return daemonsetStates, deploymentStates
+		return daemonsetStates, deploymentStates, statefulsetStates
 	}
 
 	lsbytes := co.Annotations[lastSeenAnnotation]
 	if lsbytes == "" {
-		return daemonsetStates, deploymentStates
+		return daemonsetStates, deploymentStates, statefulsetStates
 	}
 
 	out := podState{}
@@ -266,7 +338,7 @@ func (status *StatusManager) getLastPodState() (map[types.NamespacedName]daemons
 	if err != nil {
 		// No need to return error; just move on
 		log.Printf("failed to unmashal last-seen-status: %v", err)
-		return daemonsetStates, deploymentStates
+		return daemonsetStates, deploymentStates, statefulsetStates
 	}
 
 	for _, ds := range out.DaemonsetStates {
@@ -277,16 +349,22 @@ func (status *StatusManager) getLastPodState() (map[types.NamespacedName]daemons
 		deploymentStates[ds.NamespacedName] = ds
 	}
 
-	return daemonsetStates, deploymentStates
+	for _, ss := range out.StatefulsetStates {
+		statefulsetStates[ss.NamespacedName] = ss
+	}
+
+	return daemonsetStates, deploymentStates, statefulsetStates
 }
 
 func (status *StatusManager) setLastPodState(
 	dss map[types.NamespacedName]daemonsetState,
-	deps map[types.NamespacedName]deploymentState) error {
+	deps map[types.NamespacedName]deploymentState,
+	sss map[types.NamespacedName]statefulsetState) error {
 
 	ps := podState{
-		DaemonsetStates:  make([]daemonsetState, 0, len(dss)),
-		DeploymentStates: make([]deploymentState, 0, len(deps)),
+		DaemonsetStates:   make([]daemonsetState, 0, len(dss)),
+		DeploymentStates:  make([]deploymentState, 0, len(deps)),
+		StatefulsetStates: make([]statefulsetState, 0, len(sss)),
 	}
 
 	for nsn, ds := range dss {
@@ -299,6 +377,11 @@ func (status *StatusManager) setLastPodState(
 		ps.DeploymentStates = append(ps.DeploymentStates, ds)
 	}
 
+	for nsn, ss := range sss {
+		ss.NamespacedName = nsn
+		ps.StatefulsetStates = append(ps.StatefulsetStates, ss)
+	}
+
 	lsbytes, err := json.Marshal(ps)
 	if err != nil {
 		return err
@@ -306,7 +389,7 @@ func (status *StatusManager) setLastPodState(
 
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		oldStatus := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: status.name}}
-		err := status.client.Get(context.TODO(), types.NamespacedName{Name: status.name}, oldStatus)
+		err := status.client.Default().CRClient().Get(context.TODO(), types.NamespacedName{Name: status.name}, oldStatus)
 		isNotFound := errors.IsNotFound(err)
 		if err != nil && !isNotFound {
 			return err
@@ -317,26 +400,26 @@ func (status *StatusManager) setLastPodState(
 			newStatus.Annotations = map[string]string{}
 		}
 		newStatus.Annotations[lastSeenAnnotation] = string(lsbytes)
-		return status.client.Patch(context.TODO(), newStatus, crclient.MergeFrom(oldStatus))
+		return status.client.Default().CRClient().Patch(context.TODO(), newStatus, crclient.MergeFrom(oldStatus))
 	})
 }
 
 // CheckCrashLoopBackOffPods checks for pods (matching the label selector) with
 // any containers in the CrashLoopBackoff state. It returns a human-readable string
 // for any pod in such a state.
-// dName should be the name of a DaemonSet or Deployment.
-func (status *StatusManager) CheckCrashLoopBackOffPods(dName types.NamespacedName, selector map[string]string, kind string) []string {
+// name should be the name of a DaemonSet or Deployment or StatefulSet.
+func (status *StatusManager) CheckCrashLoopBackOffPods(name types.NamespacedName, selector map[string]string, kind string, cluster string) []string {
 	hung := []string{}
 	pods := &v1.PodList{}
-	err := status.client.List(context.TODO(), pods, crclient.InNamespace(dName.Namespace), crclient.MatchingLabels(selector))
+	err := status.client.ClientFor(cluster).CRClient().List(context.TODO(), pods, crclient.InNamespace(name.Namespace), crclient.MatchingLabels(selector))
 	if err != nil {
-		log.Printf("Error getting pods from %s %q: %v", kind, dName.String(), err)
+		log.Printf("Error getting pods from %s %q: %v", kind, name.String(), err)
 	}
 	for _, pod := range pods.Items {
 		for _, container := range pod.Status.ContainerStatuses {
 			if container.State.Waiting != nil {
 				if container.State.Waiting.Reason == "CrashLoopBackOff" {
-					hung = append(hung, fmt.Sprintf("%s %q rollout is not making progress - pod %s is in CrashLoopBackOff State", kind, dName.String(), pod.Name))
+					hung = append(hung, fmt.Sprintf("%s %q rollout is not making progress - pod %s is in CrashLoopBackOff State", kind, name.String(), pod.Name))
 					// we can break once we find at least one container crashing in this pod
 					break
 				}
@@ -373,7 +456,32 @@ func (status *StatusManager) setDSAnnotation(obj *appsv1.DaemonSet, key string, 
 		delete(anno, key)
 	}
 	new.SetAnnotations(anno)
-	return status.client.Patch(context.TODO(), new, crclient.MergeFrom(obj))
+	return status.client.Default().CRClient().Patch(context.TODO(), new, crclient.MergeFrom(obj))
+}
+
+// setSSAnnotation sets an annotation on a statefulset; or unsets it if value is nil
+func (status *StatusManager) setSSAnnotation(obj *appsv1.StatefulSet, key string, value *string) error {
+	new := obj.DeepCopy()
+	anno := new.GetAnnotations()
+
+	existing, set := anno[key]
+	if value != nil && set && existing == *value {
+		return nil
+	}
+	if !set && value == nil {
+		return nil
+	}
+
+	if value != nil {
+		if anno == nil {
+			anno = map[string]string{}
+		}
+		anno[key] = *value
+	} else {
+		delete(anno, key)
+	}
+	new.SetAnnotations(anno)
+	return status.client.ClientFor(cnoclient.ManagementClusterName).CRClient().Patch(context.TODO(), new, crclient.MergeFrom(obj))
 }
 
 // setDepAnnotation sets an annotation on a Deployment. If value is nil,
@@ -399,5 +507,5 @@ func (status *StatusManager) setDepAnnotation(obj *appsv1.Deployment, key string
 		delete(anno, key)
 	}
 	new.SetAnnotations(anno)
-	return status.client.Patch(context.TODO(), new, crclient.MergeFrom(obj))
+	return status.client.Default().CRClient().Patch(context.TODO(), new, crclient.MergeFrom(obj))
 }

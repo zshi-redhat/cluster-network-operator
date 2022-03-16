@@ -29,7 +29,7 @@ func (r *ReconcilePods) SetResources(resources []types.NamespacedName) {
 }
 
 // Reconcile updates the ClusterOperator.Status to match the current state of the
-// watched Deployments/DaemonSets
+// watched Deployments/DaemonSets/StatefulSets
 func (r *ReconcilePods) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	found := false
 	for _, name := range r.resources {

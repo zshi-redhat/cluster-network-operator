@@ -327,6 +327,17 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 	allResources = append(allResources, deployments...)
 	r.podReconciler.SetResources(allResources)
 
+	// Remove ovnkube-node object if ovn db route doesn't exist in hypershift management cluster
+	if bootstrapResult.OVN.OVNKubernetesConfig.HypershiftConfig.Enabled && bootstrapResult.OVN.OVNKubernetesConfig.HypershiftConfig.Route == "" {
+		log.Printf("Removing ovnkube-node objects from rendered objs")
+		for i, obj := range objs {
+			if obj.GetName() == "ovnkube-node" && obj.GetKind() == "DaemonSet" {
+				objs = append(objs[:i], objs[i+1:]...)
+				r.status.SetDegraded(statusmanager.OperatorConfig, "ApplyOperatorConfig", "Waiting ovn db route to be created")
+			}
+		}
+	}
+
 	// Apply the objects to the cluster
 	for _, obj := range objs {
 		// TODO: OwnerRef for non default clusters. For HyperShift this should probably be HostedControlPlane CR

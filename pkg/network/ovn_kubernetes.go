@@ -17,6 +17,7 @@ import (
 	yaml "github.com/ghodss/yaml"
 	configv1 "github.com/openshift/api/config/v1"
 	operv1 "github.com/openshift/api/operator/v1"
+	routev1 "github.com/openshift/api/route/v1"
 	"github.com/openshift/cluster-network-operator/pkg/bootstrap"
 	"github.com/openshift/cluster-network-operator/pkg/names"
 	"github.com/openshift/cluster-network-operator/pkg/platform"
@@ -73,8 +74,7 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 
 	// TODO: Fix operator behavior when running in a cluster with an externalized control plane.
 	// For now, return an error since we don't have any master nodes to run the ovn-master daemonset.
-	var hypershift string = os.Getenv("HYPERSHIFT")
-	if bootstrapResult.Infra.ExternalControlPlane && hypershift != "true" {
+	if bootstrapResult.Infra.ExternalControlPlane && !bootstrapResult.OVN.OVNKubernetesConfig.HypershiftConfig.Enabled {
 		return nil, fmt.Errorf("Unable to render OVN in a cluster with an external control plane")
 	}
 
@@ -133,20 +133,17 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 	}
 
 	// Hypershift
-	if hypershift == "true" {
+	if bootstrapResult.OVN.OVNKubernetesConfig.HypershiftConfig.Enabled {
 		data.Data["EnableHypershift"] = true
 	} else {
 		data.Data["EnableHypershift"] = false
 	}
 	data.Data["ManagementClusterName"] = MANAGEMENT_CLUSTER_NAME
-	data.Data["ManagementClusterDomain"] = os.Getenv("MANAGEMENT_CLUSTER_DOMAIN")
-	data.Data["HostedClusterNamespace"] = os.Getenv("HOSTED_CLUSTER_NAMESPACE")
+	data.Data["HostedClusterNamespace"] = bootstrapResult.OVN.OVNKubernetesConfig.HypershiftConfig.Namespace
 	data.Data["OvnkubeMasterReplicas"] = len(bootstrapResult.OVN.MasterAddresses)
-
 	// Sbdb route in the format of "ssl://ovnkube-sbdb-<hostedcluster namespace>.apps.<hostedcluster domain name>:443"
-	// TODO: get this from the route Status
-	data.Data["OVN_NB_DB_ROUTE"] = fmt.Sprintf("ssl://ovnkube-sbdb-%s.apps.%s:%s", os.Getenv("HOSTED_CLUSTER_NAMESPACE"), os.Getenv("MANAGEMENT_CLUSTER_DOMAIN"), OVN_SB_ROUTE_PORT)
-	data.Data["OVN_SB_DB_ROUTE"] = fmt.Sprintf("ssl://ovnkube-sbdb-%s.apps.%s:%s", os.Getenv("HOSTED_CLUSTER_NAMESPACE"), os.Getenv("MANAGEMENT_CLUSTER_DOMAIN"), OVN_SB_ROUTE_PORT)
+	data.Data["OVN_NB_DB_ROUTE"] = fmt.Sprintf("ssl://%s:%s", bootstrapResult.OVN.OVNKubernetesConfig.HypershiftConfig.Route, OVN_SB_ROUTE_PORT)
+	data.Data["OVN_SB_DB_ROUTE"] = fmt.Sprintf("ssl://%s:%s", bootstrapResult.OVN.OVNKubernetesConfig.HypershiftConfig.Route, OVN_SB_ROUTE_PORT)
 
 	data.Data["OVN_NB_INACTIVITY_PROBE"] = nb_inactivity_probe
 	data.Data["OVN_NB_DB_LIST"] = dbList(bootstrapResult.OVN.MasterAddresses, OVN_NB_PORT)
@@ -248,7 +245,7 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 
 	manifestDirs := make([]string, 2)
 	manifestDirs[0] = filepath.Join(manifestDir, "network/ovn-kubernetes/common")
-	if hypershift == "true" {
+	if bootstrapResult.OVN.OVNKubernetesConfig.HypershiftConfig.Enabled {
 		manifestDirs[1] = filepath.Join(manifestDir, "network/ovn-kubernetes/managed")
 	} else {
 		manifestDirs[1] = filepath.Join(manifestDir, "network/ovn-kubernetes/self-hosted")
@@ -371,18 +368,57 @@ func renderOVNFlowsConfig(bootstrapResult *bootstrap.BootstrapResult, data *rend
 	}
 }
 
+func bootstrapOVNHypershiftConfig(hc HypershiftConfig, kubeClient crclient.Client) (*bootstrap.OVNHypershiftBootstrapResult, error) {
+	ovnHypershiftResult := &bootstrap.OVNHypershiftBootstrapResult{
+		Enabled:   hc.Enabled,
+		Namespace: hc.Namespace,
+	}
+
+	if !hc.Enabled {
+		return ovnHypershiftResult, nil
+	}
+	route := &routev1.Route{}
+	sbdb := types.NamespacedName{Namespace: hc.Namespace, Name: "ovnkube-sbdb"}
+	err := kubeClient.Get(context.TODO(), sbdb, route)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			klog.Infof("Did not find ovnkube-sbdb route")
+		} else {
+			return nil, fmt.Errorf("Could not get ovnkube-sbdb route: %v", err)
+		}
+	} else {
+		if route.Spec.Host == "" && route.Status.Ingress[0].Host == "" {
+			return ovnHypershiftResult, nil
+		}
+		if route.Status.Ingress[0].Host != "" {
+			ovnHypershiftResult.Route = route.Status.Ingress[0].Host
+		} else if route.Spec.Host != "" {
+			ovnHypershiftResult.Route = route.Spec.Host
+		}
+		klog.Infof("Overriding OVN configuration route to %s", ovnHypershiftResult.Route)
+	}
+	return ovnHypershiftResult, nil
+}
+
 // bootstrapOVNConfig returns the value of mode found in the openshift-ovn-kubernetes/dpu-mode-config configMap
 // if it exists, otherwise returns default configuration for OCP clusters using OVN-Kubernetes
-func bootstrapOVNConfig(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.OVNConfigBoostrapResult, error) {
+func bootstrapOVNConfig(conf *operv1.Network, kubeClient crclient.Client, hc HypershiftConfig) (*bootstrap.OVNConfigBoostrapResult, error) {
 	ovnConfigResult := &bootstrap.OVNConfigBoostrapResult{
 		NodeMode: OVN_NODE_MODE_FULL,
 	}
 	if conf.Spec.DefaultNetwork.OVNKubernetesConfig.GatewayConfig == nil {
 		bootstrapOVNGatewayConfig(conf, kubeClient)
 	}
+
+	var err error
+	ovnConfigResult.HypershiftConfig, err = bootstrapOVNHypershiftConfig(hc, kubeClient)
+	if err != nil {
+		return ovnConfigResult, err
+	}
+
 	cm := &corev1.ConfigMap{}
 	dmc := types.NamespacedName{Namespace: "openshift-network-operator", Name: "dpu-mode-config"}
-	err := kubeClient.Get(context.TODO(), dmc, cm)
+	err = kubeClient.Get(context.TODO(), dmc, cm)
 
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -702,21 +738,15 @@ func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.
 		return nil, fmt.Errorf("Unable to bootstrap OVN, unable to unmarshal install-config: %s", err)
 	}
 
-	ovnConfigResult, err := bootstrapOVNConfig(conf, kubeClient)
+	hyperConfig := NewHypershiftConfig()
+	ovnConfigResult, err := bootstrapOVNConfig(conf, kubeClient, hyperConfig)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to bootstrap OVN config, err: %v", err)
 	}
 
 	controlPlaneReplicaCount, _ := strconv.Atoi(rcD.ControlPlane.Replicas)
 
-	var hypershift bool
-	if os.Getenv("HYPERSHIFT") == "true" {
-		hypershift = true
-	} else {
-		hypershift = false
-	}
-
-	ovnMasterAddresses, err := getMasterAddresses(kubeClient, controlPlaneReplicaCount, hypershift)
+	ovnMasterAddresses, err := getMasterAddresses(kubeClient, controlPlaneReplicaCount, hyperConfig.Enabled)
 	if err != nil {
 		return nil, err
 	}

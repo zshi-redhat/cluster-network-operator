@@ -29,9 +29,16 @@ type KuryrBootstrapResult struct {
 	NoProxy                  string
 }
 
+type OVNHypershiftBootstrapResult struct {
+	Enabled   bool
+	Namespace string
+	Route     string
+}
+
 type OVNConfigBoostrapResult struct {
-	GatewayMode string
-	NodeMode    string
+	GatewayMode      string
+	NodeMode         string
+	HypershiftConfig *OVNHypershiftBootstrapResult
 }
 
 type OVNBootstrapResult struct {

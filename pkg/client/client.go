@@ -3,6 +3,9 @@ package client
 import (
 	"context"
 	"fmt"
+	"log"
+	"time"
+
 	"github.com/openshift/cluster-network-operator/pkg/util/k8s"
 	clientConfig "github.com/openshift/library-go/pkg/config/client"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -14,8 +17,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	"log"
-	"time"
 
 	osoperclient "github.com/openshift/client-go/operator/clientset/versioned"
 	osoperinformer "github.com/openshift/client-go/operator/informers/externalversions"
@@ -24,6 +25,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	op_netopv1 "github.com/openshift/api/networkoperator/v1"
 	operv1 "github.com/openshift/api/operator/v1"
+	routev1 "github.com/openshift/api/route/v1"
 	netopv1 "github.com/openshift/cluster-network-operator/pkg/apis/network/v1"
 	machineapi "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 
@@ -158,6 +160,9 @@ func NewClusterClient(cfg, protocfg *rest.Config) (*ClusterClient, error) {
 		log.Fatal(err)
 	}
 	if err := configv1.Install(c.Scheme()); err != nil {
+		log.Fatal(err)
+	}
+	if err := routev1.Install(c.Scheme()); err != nil {
 		log.Fatal(err)
 	}
 	if err := netopv1.Install(c.Scheme()); err != nil {

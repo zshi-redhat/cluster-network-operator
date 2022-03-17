@@ -67,6 +67,9 @@ func TestRenderOVNKubernetes(t *testing.T) {
 			MasterAddresses: []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
 			OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 				NodeMode: "full",
+				HypershiftConfig: &bootstrap.OVNHypershiftBootstrapResult{
+					Enabled: false,
+				},
 			},
 		},
 	}
@@ -118,6 +121,9 @@ func TestRenderOVNKubernetesIPv6(t *testing.T) {
 			MasterAddresses: []string{"1.2.3.4", "5.6.7.8", "9.10.11.12"},
 			OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 				NodeMode: "full",
+				HypershiftConfig: &bootstrap.OVNHypershiftBootstrapResult{
+					Enabled: false,
+				},
 			},
 		},
 	}
@@ -134,6 +140,9 @@ func TestRenderOVNKubernetesIPv6(t *testing.T) {
 			MasterAddresses: []string{"fd01::1", "fd01::2", "fd01::3"},
 			OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 				NodeMode: "full",
+				HypershiftConfig: &bootstrap.OVNHypershiftBootstrapResult{
+					Enabled: false,
+				},
 			},
 		},
 	}
@@ -359,6 +368,9 @@ election-retry-period=26`,
 					MasterAddresses: tc.masterIPs,
 					OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 						NodeMode: "full",
+						HypershiftConfig: &bootstrap.OVNHypershiftBootstrapResult{
+							Enabled: false,
+						},
 					},
 				},
 			}
@@ -1294,6 +1306,9 @@ metadata:
 					ExistingNodeDaemonset:   node,
 					OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 						NodeMode: "full",
+						HypershiftConfig: &bootstrap.OVNHypershiftBootstrapResult{
+							Enabled: false,
+						},
 					},
 					PrePullerDaemonset: prepuller,
 				},
@@ -1596,6 +1611,9 @@ func TestRenderOVNKubernetesDualStackPrecedenceOverUpgrade(t *testing.T) {
 			},
 			OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 				NodeMode: "full",
+				HypershiftConfig: &bootstrap.OVNHypershiftBootstrapResult{
+					Enabled: false,
+				},
 			},
 		},
 	}
@@ -1689,6 +1707,9 @@ func TestRenderOVNKubernetesOVSFlowsConfigMap(t *testing.T) {
 					MasterAddresses: []string{"1.2.3.4"},
 					OVNKubernetesConfig: &bootstrap.OVNConfigBoostrapResult{
 						GatewayMode: "shared",
+						HypershiftConfig: &bootstrap.OVNHypershiftBootstrapResult{
+							Enabled: false,
+						},
 					},
 					FlowsConfig: tc.FlowsConfig,
 				},

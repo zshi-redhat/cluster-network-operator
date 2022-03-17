@@ -3,10 +3,11 @@ package apply
 import (
 	"context"
 	"fmt"
-	cnoclient "github.com/openshift/cluster-network-operator/pkg/client"
-	"github.com/openshift/cluster-network-operator/pkg/names"
 	"log"
 	"strings"
+
+	cnoclient "github.com/openshift/cluster-network-operator/pkg/client"
+	"github.com/openshift/cluster-network-operator/pkg/names"
 
 	"github.com/pkg/errors"
 

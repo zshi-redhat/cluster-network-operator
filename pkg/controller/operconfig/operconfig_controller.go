@@ -220,7 +220,7 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 	newOperConfig := operConfig.DeepCopy()
 
 	// Bootstrap any resources
-	bootstrapResult, err := network.Bootstrap(newOperConfig, r.client.Default().CRClient())
+	bootstrapResult, err := network.Bootstrap(newOperConfig, r.client)
 	if err != nil {
 		log.Printf("Failed to reconcile platform networking resources: %v", err)
 		r.status.SetDegraded(statusmanager.OperatorConfig, "BootstrapError",

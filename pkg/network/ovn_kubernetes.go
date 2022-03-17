@@ -19,6 +19,7 @@ import (
 	operv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	"github.com/openshift/cluster-network-operator/pkg/bootstrap"
+	cnoclient "github.com/openshift/cluster-network-operator/pkg/client"
 	"github.com/openshift/cluster-network-operator/pkg/names"
 	"github.com/openshift/cluster-network-operator/pkg/platform"
 	"github.com/openshift/cluster-network-operator/pkg/render"
@@ -29,6 +30,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	uns "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
@@ -368,7 +371,7 @@ func renderOVNFlowsConfig(bootstrapResult *bootstrap.BootstrapResult, data *rend
 	}
 }
 
-func bootstrapOVNHypershiftConfig(hc HypershiftConfig, kubeClient crclient.Client) (*bootstrap.OVNHypershiftBootstrapResult, error) {
+func bootstrapOVNHypershiftConfig(hc HypershiftConfig, kubeClient *cnoclient.Client) (*bootstrap.OVNHypershiftBootstrapResult, error) {
 	ovnHypershiftResult := &bootstrap.OVNHypershiftBootstrapResult{
 		Enabled:   hc.Enabled,
 		Namespace: hc.Namespace,
@@ -378,8 +381,13 @@ func bootstrapOVNHypershiftConfig(hc HypershiftConfig, kubeClient crclient.Clien
 		return ovnHypershiftResult, nil
 	}
 	route := &routev1.Route{}
-	sbdb := types.NamespacedName{Namespace: hc.Namespace, Name: "ovnkube-sbdb"}
-	err := kubeClient.Get(context.TODO(), sbdb, route)
+	gvr := schema.GroupVersionResource{
+		Group:    "route.openshift.io",
+		Version:  "v1",
+		Resource: "routes",
+	}
+	clusterClient := kubeClient.ClientFor(MANAGEMENT_CLUSTER_NAME)
+	routeObj, err := clusterClient.Dynamic().Resource(gvr).Namespace(hc.Namespace).Get(context.TODO(), "ovnkube-sbdb", metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Infof("Did not find ovnkube-sbdb route")
@@ -387,6 +395,7 @@ func bootstrapOVNHypershiftConfig(hc HypershiftConfig, kubeClient crclient.Clien
 			return nil, fmt.Errorf("Could not get ovnkube-sbdb route: %v", err)
 		}
 	} else {
+		runtime.DefaultUnstructuredConverter.FromUnstructured(routeObj.UnstructuredContent(), route)
 		if route.Spec.Host == "" && route.Status.Ingress[0].Host == "" {
 			return ovnHypershiftResult, nil
 		}
@@ -402,12 +411,12 @@ func bootstrapOVNHypershiftConfig(hc HypershiftConfig, kubeClient crclient.Clien
 
 // bootstrapOVNConfig returns the value of mode found in the openshift-ovn-kubernetes/dpu-mode-config configMap
 // if it exists, otherwise returns default configuration for OCP clusters using OVN-Kubernetes
-func bootstrapOVNConfig(conf *operv1.Network, kubeClient crclient.Client, hc HypershiftConfig) (*bootstrap.OVNConfigBoostrapResult, error) {
+func bootstrapOVNConfig(conf *operv1.Network, kubeClient *cnoclient.Client, hc HypershiftConfig) (*bootstrap.OVNConfigBoostrapResult, error) {
 	ovnConfigResult := &bootstrap.OVNConfigBoostrapResult{
 		NodeMode: OVN_NODE_MODE_FULL,
 	}
 	if conf.Spec.DefaultNetwork.OVNKubernetesConfig.GatewayConfig == nil {
-		bootstrapOVNGatewayConfig(conf, kubeClient)
+		bootstrapOVNGatewayConfig(conf, kubeClient.Default().CRClient())
 	}
 
 	var err error
@@ -418,7 +427,7 @@ func bootstrapOVNConfig(conf *operv1.Network, kubeClient crclient.Client, hc Hyp
 
 	cm := &corev1.ConfigMap{}
 	dmc := types.NamespacedName{Namespace: "openshift-network-operator", Name: "dpu-mode-config"}
-	err = kubeClient.Get(context.TODO(), dmc, cm)
+	err = kubeClient.Default().CRClient().Get(context.TODO(), dmc, cm)
 
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -725,11 +734,11 @@ func getMasterAddresses(kubeClient crclient.Client, controlPlaneReplicaCount int
 	return ovnMasterAddresses, nil
 }
 
-func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.BootstrapResult, error) {
+func bootstrapOVN(conf *operv1.Network, kubeClient *cnoclient.Client) (*bootstrap.BootstrapResult, error) {
 	clusterConfig := &corev1.ConfigMap{}
 	clusterConfigLookup := types.NamespacedName{Name: CLUSTER_CONFIG_NAME, Namespace: CLUSTER_CONFIG_NAMESPACE}
 
-	if err := kubeClient.Get(context.TODO(), clusterConfigLookup, clusterConfig); err != nil {
+	if err := kubeClient.Default().CRClient().Get(context.TODO(), clusterConfigLookup, clusterConfig); err != nil {
 		return nil, fmt.Errorf("Unable to bootstrap OVN, unable to retrieve cluster config: %s", err)
 	}
 
@@ -746,7 +755,7 @@ func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.
 
 	controlPlaneReplicaCount, _ := strconv.Atoi(rcD.ControlPlane.Replicas)
 
-	ovnMasterAddresses, err := getMasterAddresses(kubeClient, controlPlaneReplicaCount, hyperConfig.Enabled)
+	ovnMasterAddresses, err := getMasterAddresses(kubeClient.Default().CRClient(), controlPlaneReplicaCount, hyperConfig.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -781,7 +790,7 @@ func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.
 		},
 	}
 	nsn := types.NamespacedName{Namespace: "openshift-ovn-kubernetes", Name: "ovnkube-master"}
-	if err := kubeClient.Get(context.TODO(), nsn, masterDS); err != nil {
+	if err := kubeClient.Default().CRClient().Get(context.TODO(), nsn, masterDS); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("Failed to retrieve existing master DaemonSet: %w", err)
 		} else {
@@ -796,7 +805,7 @@ func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.
 		},
 	}
 	nsn = types.NamespacedName{Namespace: "openshift-ovn-kubernetes", Name: "ovnkube-node"}
-	if err := kubeClient.Get(context.TODO(), nsn, nodeDS); err != nil {
+	if err := kubeClient.Default().CRClient().Get(context.TODO(), nsn, nodeDS); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("Failed to retrieve existing node DaemonSet: %w", err)
 		} else {
@@ -811,7 +820,7 @@ func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.
 		},
 	}
 	nsn = types.NamespacedName{Namespace: "openshift-ovn-kubernetes", Name: "ovnkube-upgrades-prepuller"}
-	if err := kubeClient.Get(context.TODO(), nsn, prePullerDS); err != nil {
+	if err := kubeClient.Default().CRClient().Get(context.TODO(), nsn, prePullerDS); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("Failed to retrieve existing prepuller DaemonSet: %w", err)
 		} else {
@@ -819,7 +828,7 @@ func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.
 		}
 	}
 
-	infraRes, err := platform.BootstrapInfra(kubeClient)
+	infraRes, err := platform.BootstrapInfra(kubeClient.Default().CRClient())
 	if err != nil {
 		return nil, err
 	}
@@ -833,7 +842,7 @@ func bootstrapOVN(conf *operv1.Network, kubeClient crclient.Client) (*bootstrap.
 			ExistingNodeDaemonset:   nodeDS,
 			OVNKubernetesConfig:     ovnConfigResult,
 			PrePullerDaemonset:      prePullerDS,
-			FlowsConfig:             bootstrapFlowsConfig(kubeClient),
+			FlowsConfig:             bootstrapFlowsConfig(kubeClient.Default().CRClient()),
 		},
 	}
 	return &res, nil

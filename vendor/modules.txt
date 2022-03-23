@@ -273,6 +273,9 @@ github.com/openshift/client-go/operatorcontrolplane/informers/externalversions/o
 github.com/openshift/client-go/operatorcontrolplane/listers/operatorcontrolplane/v1alpha1
 # github.com/openshift/cluster-api-provider-gcp v0.0.1-0.20201201000827-1117a4fc438c
 github.com/openshift/cluster-api-provider-gcp/pkg/apis/gcpprovider/v1beta1
+# github.com/openshift/hypershift/api v0.0.0-20210826030201-9e6982f7554e
+## explicit
+github.com/openshift/hypershift/api/v1alpha1
 # github.com/openshift/library-go v0.0.0-20211220195323-eca2c467c492
 ## explicit
 github.com/openshift/library-go/pkg/authorization/hardcodedauthorizer

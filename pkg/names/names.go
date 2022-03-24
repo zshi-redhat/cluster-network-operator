@@ -64,6 +64,10 @@ const KuryrOctaviaVersionAnnotation = "networkoperator.openshift.io/kuryr-octavi
 // value format: cluster/namespace/name
 const CopyFromAnnotation = "network.operator.openshift.io/copy-from"
 
+// CopyFromAnnotation is an annotation that allows copying resources from specified clusters
+// value format: cluster/namespace/name
+const RelatedClusterObjectsAnnotation = "network.operator.openshift.io/relatedClusterObjects"
+
 // MULTUS_VALIDATING_WEBHOOK is the name of the ValidatingWebhookConfiguration for multus-admission-controller
 // that is used in multus admission controller deployment
 const MULTUS_VALIDATING_WEBHOOK = "multus.openshift.io"

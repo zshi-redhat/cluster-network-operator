@@ -289,7 +289,7 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 		}
 		if obj.GetClusterName() == cnoclient.ManagementClusterName {
 			relatedClusterObjects = append(relatedClusterObjects, network.RelatedObject{
-				Reference: configv1.ObjectReference{
+				ObjectReference: configv1.ObjectReference{
 					Group:     obj.GetObjectKind().GroupVersionKind().Group,
 					Resource:  restMapping.Resource.Resource,
 					Name:      obj.GetName(),

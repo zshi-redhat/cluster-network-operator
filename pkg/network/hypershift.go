@@ -19,7 +19,7 @@ var (
 )
 
 type RelatedObject struct {
-	Reference   configv1.ObjectReference
+	configv1.ObjectReference
 	ClusterName string
 }
 

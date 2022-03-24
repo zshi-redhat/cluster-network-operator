@@ -75,29 +75,55 @@ func New(client cnoclient.Client, name string) *StatusManager {
 	}
 }
 
-// setCOAnnotation sets an annotation on the clusterOperator network; or unsets it if value is nil
-func (status *StatusManager) setCOAnnotation(obj *configv1.ClusterOperator, key string, value *string) error {
+// setCOAnnotation sets an annotation on the clusterOperator network object
+func (status *StatusManager) setCOAnnotation(obj *configv1.ClusterOperator) error {
 	new := obj.DeepCopy()
 	anno := new.GetAnnotations()
+	value := []string{}
 
-	existing, set := anno[key]
-	if value != nil && set && existing == *value {
-		return nil
+	if anno == nil {
+		anno = map[string]string{}
 	}
-	if !set && value == nil {
-		return nil
+	for _, obj := range status.hypershiftConfig.RelatedObjects {
+		value = append(value, fmt.Sprintf("%s/%s/%s/%s/%s", obj.ClusterName, obj.Group, obj.Resource, obj.Namespace, obj.Name))
 	}
-
-	if value != nil {
-		if anno == nil {
-			anno = map[string]string{}
-		}
-		anno[key] = *value
-	} else {
-		delete(anno, key)
-	}
+	anno[names.RelatedClusterObjectsAnnotation] = strings.Join(value, ",")
 	new.SetAnnotations(anno)
 	return status.client.Default().CRClient().Patch(context.TODO(), new, crclient.MergeFrom(obj))
+}
+
+// getCOAnnotation gets an annotation from the clusterOperator network object
+func (status *StatusManager) getCOAnnotation(obj *configv1.ClusterOperator) ([]network.RelatedObject, error) {
+	new := obj.DeepCopy()
+	anno := new.GetAnnotations()
+	objs := []network.RelatedObject{}
+
+	value, set := anno[names.RelatedClusterObjectsAnnotation]
+	if !set {
+		return objs, nil
+	}
+	items := strings.Split(value, ",")
+	if len(items) == 0 {
+		return objs, nil
+	}
+	for _, res := range items {
+		parts := strings.Split(res, "/")
+		if len(parts) != 5 {
+			return objs, fmt.Errorf("'%s' annotation is invalid, expected: ClusterName/Group/Resource/Namespace/Name, got: %s",
+				names.RelatedClusterObjectsAnnotation, res)
+		}
+		objs = append(objs, network.RelatedObject{
+			ClusterName: parts[0],
+			ObjectReference: configv1.ObjectReference{
+				Group:     parts[1],
+				Resource:  parts[2],
+				Namespace: parts[3],
+				Name:      parts[4],
+			},
+		})
+	}
+
+	return objs, nil
 }
 
 // deleteRelatedObjects checks for related objects attached to ClusterOperator and deletes
@@ -120,7 +146,6 @@ func (status *StatusManager) deleteRelatedObjectsNotRendered(co *configv1.Cluste
 				Group:    currentObj.Group,
 				Resource: currentObj.Resource,
 			}
-			// TODO: delete resources in hypershift management cluster
 			gvk, err := status.client.Default().RESTMapper().KindFor(gvr)
 			if err != nil {
 				log.Printf("Error getting GVK of object for deletion: %v", err)
@@ -148,6 +173,47 @@ func (status *StatusManager) deleteRelatedObjectsNotRendered(co *configv1.Cluste
 				log.Printf("Error deleting related object: %v", err)
 				if !errors.IsNotFound(err) {
 					status.relatedObjects = append(status.relatedObjects, currentObj)
+				}
+				continue
+			}
+		}
+	}
+
+	currentObjs, err := status.getCOAnnotation(co)
+	if err != nil {
+		log.Printf("Error parsing related cluster objects: %v", err)
+	}
+	for _, currentObj := range currentObjs {
+		var found bool = false
+		for _, renderedObj := range status.hypershiftConfig.RelatedObjects {
+			found = reflect.DeepEqual(currentObj, renderedObj)
+			if found {
+				break
+			}
+		}
+		if !found {
+			gvr := schema.GroupVersionResource{
+				Group:    currentObj.Group,
+				Resource: currentObj.Resource,
+			}
+			gvk, err := status.client.ClientFor(cnoclient.ManagementClusterName).RESTMapper().KindFor(gvr)
+			if err != nil {
+				log.Printf("Error getting GVK of object for deletion: %v", err)
+				status.hypershiftConfig.RelatedObjects = append(status.hypershiftConfig.RelatedObjects, currentObj)
+				continue
+			}
+
+			log.Printf("Detected related cluster object with GVK %+v, namespace %v and name %v not rendered by manifests, deleting...", gvk, currentObj.Namespace, currentObj.Name)
+			objToDelete := &uns.Unstructured{}
+			objToDelete.SetName(currentObj.Name)
+			objToDelete.SetNamespace(currentObj.Namespace)
+			objToDelete.SetClusterName(currentObj.ClusterName)
+			objToDelete.SetGroupVersionKind(gvk)
+			err = status.client.ClientFor(cnoclient.ManagementClusterName).CRClient().Delete(context.TODO(), objToDelete, crclient.PropagationPolicy("Background"))
+			if err != nil {
+				log.Printf("Error deleting related cluser object: %v", err)
+				if !errors.IsNotFound(err) {
+					status.hypershiftConfig.RelatedObjects = append(status.hypershiftConfig.RelatedObjects, currentObj)
 				}
 				continue
 			}
@@ -332,12 +398,7 @@ func (status *StatusManager) set(reachedAvailableLevel bool, conditions ...operv
 		}
 
 		if status.hypershiftConfig.RelatedObjects != nil {
-			objs := []string{}
-			for _, obj := range status.hypershiftConfig.RelatedObjects {
-				objs = append(objs, fmt.Sprintf("%s/%s/%s", obj.ClusterName, obj.Reference.Namespace, obj.Reference.Name))
-			}
-			annotValue := strings.Join(objs, ",")
-			err := status.setCOAnnotation(co, "network.operator.openshift.io/relatedObjects", &annotValue)
+			err := status.setCOAnnotation(co)
 			if err != nil {
 				return err
 			}

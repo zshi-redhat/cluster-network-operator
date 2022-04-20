@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	configv1 "github.com/openshift/api/config/v1"
 	operv1 "github.com/openshift/api/operator/v1"
 )
 
@@ -36,14 +37,14 @@ func TestRenderNetworkMetricsDaemon(t *testing.T) {
 	fillDefaults(config, nil)
 
 	// disable MultusAdmissionController
-	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir)
+	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(objs).NotTo(ContainElement(HaveKubernetesID("DaemonSet", "openshift-multus", "network-metrics-daemon")))
 
 	// enable MultusAdmissionController
 	enabled := false
 	config.DisableMultiNetwork = &enabled
-	objs, err = renderMultus(config, fakeBootstrapResult(), manifestDir)
+	objs, err = renderMultus(config, fakeBootstrapResult(), manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(objs).To(ContainElement(HaveKubernetesID("DaemonSet", "openshift-multus", "network-metrics-daemon")))
 

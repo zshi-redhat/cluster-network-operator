@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	configv1 "github.com/openshift/api/config/v1"
 	operv1 "github.com/openshift/api/operator/v1"
 )
 
@@ -171,7 +172,7 @@ func TestRenderWithDHCP(t *testing.T) {
 	config := &crd.Spec
 	fillDefaults(config, nil)
 
-	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir)
+	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(objs).To(ContainElement(HaveKubernetesID("DaemonSet", "openshift-multus", "dhcp-daemon")))
 }
@@ -184,7 +185,7 @@ func TestRenderNoDHCP(t *testing.T) {
 	config := &crd.Spec
 	fillDefaults(config, nil)
 
-	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir)
+	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(objs).NotTo(ContainElement(HaveKubernetesID("DaemonSet", "openshift-multus", "dhcp-daemon")))
 }
@@ -197,7 +198,7 @@ func TestRenderInvalidDHCP(t *testing.T) {
 	config := &crd.Spec
 	fillDefaults(config, nil)
 
-	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir)
+	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(objs).NotTo(ContainElement(HaveKubernetesID("DaemonSet", "openshift-multus", "dhcp-daemon")))
 }
@@ -210,7 +211,7 @@ func TestRenderWithDHCPSimpleMacvlan(t *testing.T) {
 	config := &crd.Spec
 	fillDefaults(config, nil)
 
-	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir)
+	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(objs).To(ContainElement(HaveKubernetesID("DaemonSet", "openshift-multus", "dhcp-daemon")))
 }
@@ -223,7 +224,7 @@ func TestRenderNoDHCPSimpleMacvlan(t *testing.T) {
 	config := &crd.Spec
 	fillDefaults(config, nil)
 
-	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir)
+	objs, err := renderMultus(config, fakeBootstrapResult(), manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(objs).NotTo(ContainElement(HaveKubernetesID("DaemonSet", "openshift-multus", "dhcp-daemon")))
 }

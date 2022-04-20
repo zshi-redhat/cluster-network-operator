@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"log"
 	"reflect"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"strings"
 	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 
 	"github.com/pkg/errors"
 
@@ -267,8 +268,19 @@ func (r *ReconcileOperConfig) Reconcile(ctx context.Context, request reconcile.R
 		}
 	}
 
+	// If we use hypershift, the components need proxy settings. In selfhosted, they
+	// are always local to the API so there it is never needed.
+	var proxyConfig configv1.ProxyStatus
+	if hyperShiftConfig := network.NewHyperShiftConfig(); hyperShiftConfig.Enabled {
+		var proxy configv1.Proxy
+		if err := r.client.Default().CRClient().Get(ctx, crclient.ObjectKey{Name: "cluster"}, &proxy); err != nil {
+			return reconcile.Result{}, err
+		}
+		proxyConfig = proxy.Status
+	}
+
 	// Generate the objects
-	objs, progressing, err := network.Render(&operConfig.Spec, bootstrapResult, ManifestPath)
+	objs, progressing, err := network.Render(&operConfig.Spec, bootstrapResult, ManifestPath, proxyConfig)
 	if err != nil {
 		log.Printf("Failed to render: %v", err)
 		r.status.SetDegraded(statusmanager.OperatorConfig, "RenderError",

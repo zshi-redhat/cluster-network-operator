@@ -20,7 +20,7 @@ import (
 	utilnet "k8s.io/utils/net"
 )
 
-func Render(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult, manifestDir string) ([]*uns.Unstructured, bool, error) {
+func Render(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult, manifestDir string, proxy configv1.ProxyStatus) ([]*uns.Unstructured, bool, error) {
 	log.Printf("Starting render phase")
 	var progressing bool
 	objs := []*uns.Unstructured{}
@@ -28,14 +28,14 @@ func Render(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult
 	// render cloud network config controller **before** the network plugin.
 	// the network plugin is dependent upon having the cloud network CRD
 	// defined as to initialize its watcher, otherwise it will error and crash
-	o, err := renderCloudNetworkConfigController(conf, bootstrapResult.Infra, manifestDir)
+	o, err := renderCloudNetworkConfigController(conf, bootstrapResult.Infra, manifestDir, proxy)
 	if err != nil {
 		return nil, progressing, err
 	}
 	objs = append(objs, o...)
 
 	// render Multus
-	o, err = renderMultus(conf, bootstrapResult, manifestDir)
+	o, err = renderMultus(conf, bootstrapResult, manifestDir, proxy)
 	if err != nil {
 		return nil, progressing, err
 	}
@@ -56,7 +56,7 @@ func Render(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult
 	objs = append(objs, o...)
 
 	// render default network
-	o, progressing, err = renderDefaultNetwork(conf, bootstrapResult, manifestDir)
+	o, progressing, err = renderDefaultNetwork(conf, bootstrapResult, manifestDir, proxy)
 	if err != nil {
 		return nil, progressing, err
 	}
@@ -477,7 +477,7 @@ func validateDefaultNetwork(conf *operv1.NetworkSpec) []error {
 
 // renderDefaultNetwork generates the manifests corresponding to the requested
 // default network
-func renderDefaultNetwork(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult, manifestDir string) ([]*uns.Unstructured, bool, error) {
+func renderDefaultNetwork(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult, manifestDir string, proxy configv1.ProxyStatus) ([]*uns.Unstructured, bool, error) {
 	dn := conf.DefaultNetwork
 	if errs := validateDefaultNetwork(conf); len(errs) > 0 {
 		return nil, false, errors.Errorf("invalid Default Network configuration: %v", errs)
@@ -485,9 +485,9 @@ func renderDefaultNetwork(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.B
 
 	switch dn.Type {
 	case operv1.NetworkTypeOpenShiftSDN:
-		return renderOpenShiftSDN(conf, bootstrapResult, manifestDir)
+		return renderOpenShiftSDN(conf, bootstrapResult, manifestDir, proxy)
 	case operv1.NetworkTypeOVNKubernetes:
-		return renderOVNKubernetes(conf, bootstrapResult, manifestDir)
+		return renderOVNKubernetes(conf, bootstrapResult, manifestDir, proxy)
 	case operv1.NetworkTypeKuryr:
 		return renderKuryr(conf, bootstrapResult, manifestDir)
 	default:

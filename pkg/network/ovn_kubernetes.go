@@ -73,7 +73,7 @@ const (
 // - the ovnkube-node daemonset
 // - the ovnkube-master deployment
 // and some other small things.
-func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult, manifestDir string) ([]*uns.Unstructured, bool, error) {
+func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult, manifestDir string, proxy configv1.ProxyStatus) ([]*uns.Unstructured, bool, error) {
 	var progressing bool
 
 	// TODO: Fix operator behavior when running in a cluster with an externalized control plane.
@@ -97,6 +97,9 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 	data.Data["KUBERNETES_SERVICE_PORT"] = apiServer.Port
 	data.Data["K8S_APISERVER"] = fmt.Sprintf("https://%s:%s", apiServer.Host, apiServer.Port)
 	data.Data["K8S_LOCAL_APISERVER"] = fmt.Sprintf("https://%s:%s", localAPIServer.Host, localAPIServer.Port)
+	data.Data["HTTP_PROXY"] = proxy.HTTPProxy
+	data.Data["HTTPS_PROXY"] = proxy.HTTPSProxy
+	data.Data["NO_PROXY"] = proxy.NoProxy
 
 	data.Data["TokenMinterImage"] = os.Getenv("TOKEN_MINTER_IMAGE")
 	// TOKEN_AUDIENCE is used by token-minter to identify the audience for the service account token which is verified by the apiserver

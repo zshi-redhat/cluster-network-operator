@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-network-operator/pkg/bootstrap"
 	"github.com/openshift/cluster-network-operator/pkg/names"
@@ -73,7 +74,7 @@ func TestRenderOVNKubernetes(t *testing.T) {
 		},
 	}
 
-	objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn)
+	objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(objs).To(ContainElement(HaveKubernetesID("DaemonSet", "openshift-ovn-kubernetes", "ovnkube-node")))
 	g.Expect(objs).To(ContainElement(HaveKubernetesID("DaemonSet", "openshift-ovn-kubernetes", "ovnkube-master")))
@@ -125,7 +126,7 @@ func TestRenderOVNKubernetesIPv6(t *testing.T) {
 			},
 		},
 	}
-	objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn)
+	objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 
 	script, err := findNBDBPostStart(objs)
@@ -143,7 +144,7 @@ func TestRenderOVNKubernetesIPv6(t *testing.T) {
 			},
 		},
 	}
-	objs, _, err = renderOVNKubernetes(config, bootstrapResult, manifestDirOvn)
+	objs, _, err = renderOVNKubernetes(config, bootstrapResult, manifestDirOvn, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 
 	script, err = findNBDBPostStart(objs)
@@ -367,7 +368,7 @@ election-retry-period=26`,
 					},
 				},
 			}
-			objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn)
+			objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn, configv1.ProxyStatus{})
 			g.Expect(err).NotTo(HaveOccurred())
 			confFile := extractOVNKubeConfig(g, objs)
 			g.Expect(confFile).To(Equal(strings.TrimSpace(tc.expected)))
@@ -1170,7 +1171,7 @@ status:
   numberMisscheduled: 0
   numberReady: 5
   observedGeneration: 2
-  updatedNumberScheduled: 
+  updatedNumberScheduled:
 `,
 			node: `
 apiVersion: apps/v1
@@ -1306,7 +1307,7 @@ metadata:
 				PrePullerDaemonset: prepuller,
 			}
 
-			objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn)
+			objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn, configv1.ProxyStatus{})
 			g.Expect(err).NotTo(HaveOccurred())
 
 			renderedNode := findInObjs("apps", "DaemonSet", "ovnkube-node", "openshift-ovn-kubernetes", objs)
@@ -1611,7 +1612,7 @@ func TestRenderOVNKubernetesDualStackPrecedenceOverUpgrade(t *testing.T) {
 
 	// the new rendered config should hold the node to do the dualstack conversion
 	// the upgrade code holds the masters to update the nodes first
-	objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn)
+	objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn, configv1.ProxyStatus{})
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -1704,7 +1705,7 @@ func TestRenderOVNKubernetesOVSFlowsConfigMap(t *testing.T) {
 				},
 				FlowsConfig: tc.FlowsConfig,
 			}
-			objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn)
+			objs, _, err := renderOVNKubernetes(config, bootstrapResult, manifestDirOvn, configv1.ProxyStatus{})
 			g.Expect(err).ToNot(HaveOccurred())
 			nodeDS := findInObjs("apps", "DaemonSet", "ovnkube-node", "openshift-ovn-kubernetes", objs)
 			ds := appsv1.DaemonSet{}

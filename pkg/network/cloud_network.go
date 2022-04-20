@@ -18,7 +18,7 @@ import (
 )
 
 // renderCloudNetworkConfigController renders the cloud network config controller
-func renderCloudNetworkConfigController(conf *operv1.NetworkSpec, cloudBootstrapResult bootstrap.InfraStatus, manifestDir string) ([]*uns.Unstructured, error) {
+func renderCloudNetworkConfigController(conf *operv1.NetworkSpec, cloudBootstrapResult bootstrap.InfraStatus, manifestDir string, proxy v1.ProxyStatus) ([]*uns.Unstructured, error) {
 	pt := cloudBootstrapResult.PlatformType
 	if !(pt == v1.AWSPlatformType || pt == v1.AzurePlatformType || pt == v1.GCPPlatformType) {
 		return nil, nil
@@ -36,6 +36,9 @@ func renderCloudNetworkConfigController(conf *operv1.NetworkSpec, cloudBootstrap
 	data.Data["ExternalControlPlane"] = cloudBootstrapResult.ExternalControlPlane
 	data.Data["PlatformAzureEnvironment"] = ""
 	data.Data["PlatformAWSCAPath"] = ""
+	data.Data["HTTP_PROXY"] = proxy.HTTPProxy
+	data.Data["HTTPS_PROXY"] = proxy.HTTPSProxy
+	data.Data["NO_PROXY"] = proxy.NoProxy
 
 	// AWS and azure allow for funky endpoint overriding.
 	// in different ways, of course.

@@ -28,7 +28,7 @@ import (
 // - the sdn daemonset
 // - the openvswitch daemonset
 // and some other small things.
-func renderOpenShiftSDN(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult, manifestDir string) ([]*uns.Unstructured, bool, error) {
+func renderOpenShiftSDN(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.BootstrapResult, manifestDir string, proxy configv1.ProxyStatus) ([]*uns.Unstructured, bool, error) {
 	var progressing bool
 	c := conf.DefaultNetwork.OpenShiftSDNConfig
 
@@ -45,6 +45,9 @@ func renderOpenShiftSDN(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Boo
 	data.Data["CNIConfDir"] = pluginCNIConfDir(conf)
 	data.Data["CNIBinDir"] = CNIBinDir
 	data.Data["PlatformType"] = bootstrapResult.Infra.PlatformType
+	data.Data["HTTP_PROXY"] = proxy.HTTPProxy
+	data.Data["HTTPS_PROXY"] = proxy.HTTPSProxy
+	data.Data["NO_PROXY"] = proxy.NoProxy
 	if bootstrapResult.Infra.PlatformType == configv1.AzurePlatformType {
 		data.Data["SDNPlatformAzure"] = true
 	} else {

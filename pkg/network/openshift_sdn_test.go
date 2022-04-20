@@ -6,6 +6,7 @@ import (
 
 	yaml "github.com/ghodss/yaml"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-network-operator/pkg/bootstrap"
 
@@ -53,7 +54,7 @@ func TestRenderOpenShiftSDN(t *testing.T) {
 	g.Expect(errs).To(HaveLen(0))
 	fillDefaults(config, nil)
 
-	objs, _, err := renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err := renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 
 	// It's important that the namespace is first
@@ -204,7 +205,7 @@ func TestProxyArgs(t *testing.T) {
 	}
 
 	// test default rendering
-	objs, _, err := renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err := renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	cfg := getProxyConfigFile(objs)
 
@@ -219,7 +220,7 @@ func TestProxyArgs(t *testing.T) {
 		BindAddress:        "1.2.3.4",
 		ProxyArguments:     map[string]operv1.ProxyArgumentList{},
 	}
-	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	cfg = getProxyConfigFile(objs)
 	val, _, _ = uns.NestedString(cfg.Object, "iptables", "syncPeriod")
@@ -232,7 +233,7 @@ func TestProxyArgs(t *testing.T) {
 		"cluster-cidr":       {"1.2.3.4/5"},
 		"config-sync-period": {"1s", "2s"},
 	}
-	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	cfg = getProxyConfigFile(objs)
 
@@ -246,7 +247,7 @@ func TestProxyArgs(t *testing.T) {
 	config.KubeProxyConfig.ProxyArguments = map[string]operv1.ProxyArgumentList{
 		"proxy-mode": {"iptables"},
 	}
-	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	cfg = getProxyConfigFile(objs)
 
@@ -256,7 +257,7 @@ func TestProxyArgs(t *testing.T) {
 	// Disabling unidling doesn't add the fixup
 	f := false
 	config.DefaultNetwork.OpenShiftSDNConfig.EnableUnidling = &f
-	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	cfg = getProxyConfigFile(objs)
 
@@ -283,7 +284,7 @@ func TestProxyArgs(t *testing.T) {
 	errs = validateKubeProxy(config)
 	g.Expect(errs).To(HaveLen(1))
 
-	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	cfg = getProxyConfigFile(objs)
 
@@ -389,7 +390,7 @@ func TestOpenShiftSDNMultitenant(t *testing.T) {
 		Infra: bootstrap.InfraStatus{},
 	}
 
-	objs, _, err := renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err := renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 
 	// the full list of namespaces with a netns
@@ -479,7 +480,7 @@ func TestOpenshiftSDNProxyConfig(t *testing.T) {
 	}
 
 	// test default rendering
-	objs, _, err := renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err := renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(getProxyConfig(objs)).To(MatchYAML(`
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
@@ -533,7 +534,7 @@ winkernel:
 	// Disable unidling
 	f := false
 	config.DefaultNetwork.OpenShiftSDNConfig.EnableUnidling = &f
-	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir)
+	objs, _, err = renderOpenShiftSDN(config, bootstrapResult, manifestDir, configv1.ProxyStatus{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(getProxyConfig(objs)).To(MatchYAML(`
 apiVersion: kubeproxy.config.k8s.io/v1alpha1

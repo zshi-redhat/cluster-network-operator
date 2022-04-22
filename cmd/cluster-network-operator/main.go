@@ -4,12 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	cnoclient "github.com/openshift/cluster-network-operator/pkg/client"
 	"log"
 	"math/rand"
 	"net/url"
 	"os"
 	"time"
+
+	cnoclient "github.com/openshift/cluster-network-operator/pkg/client"
 
 	"github.com/openshift/cluster-network-operator/pkg/operator"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
@@ -94,6 +95,7 @@ which is a kubeconfig from which to take just the URL to the apiserver`,
 	cmd.AddCommand(cmd2)
 
 	cmd.AddCommand(newMTUProberCommand())
+	cmd.AddCommand(newProxyCommand())
 
 	return cmd
 }

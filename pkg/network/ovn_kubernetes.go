@@ -168,6 +168,9 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 	}
 	data.Data["OVN_NB_DB_ENDPOINT"] = bootstrapResult.OVN.OVNKubernetesConfig.HyperShiftConfig.OVNSbDbEndpoint
 	data.Data["OVN_SB_DB_ENDPOINT"] = bootstrapResult.OVN.OVNKubernetesConfig.HyperShiftConfig.OVNSbDbEndpoint
+	data.Data["OVN_SB_DB_HOST"] = strings.Join(strings.Split(bootstrapResult.OVN.OVNKubernetesConfig.HyperShiftConfig.OVNSbDbEndpoint, ":")[1:], ":")
+	data.Data["OVN_SB_DB_PROXY"] = strings.Split(proxy.HTTPProxy, "://")[1]
+	data.Data["CNOImage"] = os.Getenv("NETWORK_CHECK_TARGET_IMAGE")
 
 	data.Data["OVN_NB_INACTIVITY_PROBE"] = nb_inactivity_probe
 	data.Data["OVN_NB_DB_LIST"] = dbList(bootstrapResult.OVN.MasterAddresses, OVN_NB_PORT)

@@ -73,7 +73,7 @@ func mergeUserSystemNoProxy(proxy *configv1.Proxy, infra *configv1.Infrastructur
 	// puts the external one in this field (because components expect it to be non-empty). We can not
 	// derive from the cluster if we need to proxy the internal apiserver address or not, so we have this
 	// knob that allows Hypershift to tell us.
-	if getEnv("PROXY_INTERNAL_APISERVER_ADDRESS") != "true" {
+	if getEnv("PROXY_INTERNAL_APISERVER_ADDRESS") == "true" {
 		if len(infra.Status.APIServerInternalURL) > 0 {
 			internalAPIServer, err := url.Parse(infra.Status.APIServerInternalURL)
 			if err != nil {

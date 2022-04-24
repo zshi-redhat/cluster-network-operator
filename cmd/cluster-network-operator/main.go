@@ -96,6 +96,7 @@ which is a kubeconfig from which to take just the URL to the apiserver`,
 
 	cmd.AddCommand(newMTUProberCommand())
 	cmd.AddCommand(newProxyCommand())
+	cmd.AddCommand(newTLSProxyCommand())
 
 	return cmd
 }

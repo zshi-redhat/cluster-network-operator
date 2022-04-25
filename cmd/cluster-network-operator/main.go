@@ -98,6 +98,7 @@ which is a kubeconfig from which to take just the URL to the apiserver`,
 	cmd.AddCommand(newProxyCommand())
 	cmd.AddCommand(newTLSProxyCommand())
 	cmd.AddCommand(newRedirectProxyCommand())
+	cmd.AddCommand(newTLSRedirectProxyCommand())
 
 	cmd.AddCommand(newServerProxyCommand())
 	cmd.AddCommand(newServerTLSProxyCommand())

@@ -81,6 +81,31 @@ spec:
           name: admin-kubeconfig
         - mountPath: /var/run/secrets/hosted_cluster
           name: hosted-cluster-api-access
+      - name: ovnkube-proxy
+        image: "{{.CNOImage}}"
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -xe
+          if [[ -f "/env/${K8S_NODE}" ]]; then
+            set -o allexport
+            source "/env/${K8S_NODE}"
+            set +o allexport
+          fi
+          echo "$(date -Iseconds) - starting ovndb server tls proxy"
+          exec /usr/bin/cluster-network-operator ovn-server-tls-proxy \
+            --listen-addr 0.0.0.0:9648
+        env:
+        - name: K8S_NODE
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - mountPath: /env
+          name: env-overrides
+        - mountPath: /ovn-cert
+          name: ovn-cert
       # ovn-northd: convert network objects in nbdb to flows in sbdb
       - name: northd
         image: "{{.OvnImage}}"

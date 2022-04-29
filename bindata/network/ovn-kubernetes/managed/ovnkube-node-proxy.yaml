@@ -1,0 +1,75 @@
+{{if .ENABLE_OVN_NODE_PROXY}}
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: ovnkube-node-proxy
+  namespace: openshift-ovn-kubernetes
+  annotations:
+    kubernetes.io/description: |
+      This daemonset launches the ovnkube-node proxy for hypershift.
+    release.openshift.io/version: "{{.ReleaseVersion}}"
+spec:
+  selector:
+    matchLabels:
+      app: ovnkube-node-proxy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
+  template:
+    metadata:
+      annotations:
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+      labels:
+        app: ovnkube-node-proxy
+        component: network
+        type: infra
+        openshift.io/component: network
+        kubernetes.io/os: "linux"
+    spec:
+      serviceAccountName: ovn-kubernetes-node
+      nodeSelector:
+        beta.kubernetes.io/os: "linux"
+      tolerations:
+      - operator: "Exists"
+      hostNetwork: true
+      hostPID: true
+      priorityClassName: "system-node-critical"
+      containers:
+      # ovnkube-node-proxy: redirect ovnsb traffic to proxy for hypershift hostedcluster nodes
+      - name: ovnkube-node-proxy
+        image: "{{.OvnImage}}"
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          if [[ -f "/env/${K8S_NODE}" ]]; then
+            set -o allexport
+            source "/env/${K8S_NODE}"
+            set +o allexport
+          fi
+
+          echo "$(date -Iseconds) - starting ovnkube-node-proxy"
+          exec socat TCP-LISTEN:9645,reuseaddr,fork PROXY:{{.HTTP_PROXY_IP}}:{{.OVN_SB_DB_ROUTE_HOST}}:{{.OVN_SB_DB_ROUTE_PORT}},proxyport={{.HTTP_PROXY_PORT}}
+        securityContext:
+          privileged: true
+        env:
+        - name: K8S_NODE
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - mountPath: /env
+          name: env-overrides
+        terminationMessagePolicy: FallbackToLogsOnError
+        resources:
+          requests:
+            cpu: 10m
+            memory: 300Mi
+      volumes:
+      - name: env-overrides
+        configMap:
+          name: env-overrides
+          optional: true
+{{end}}
